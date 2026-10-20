@@ -36,7 +36,10 @@ export async function exchangeChallenge(signedTransactionXdr: string) {
 }
 
 export async function logout() {
-  await fetch("/api/auth/logout", { method: "POST" });
+  // Not routed through json(): that helper treats a 401 as an expired session
+  // and dispatches SESSION_EXPIRED_EVENT, which is wrong for a sign-out.
+  const res = await fetch("/api/auth/logout", { method: "POST" });
+  if (!res.ok) throw new Error(`Sign-out failed: ${res.status}`);
 }
 
 export async function getSession() {

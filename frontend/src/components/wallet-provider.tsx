@@ -58,7 +58,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const watcher = new WatchWalletChanges(3000);
     watcher.watch(({ address }) => {
       if (address && address !== account) {
-        void apiLogout();
+        // The wallet is a different account now, so the UI must disconnect
+        // either way; if deleting the cookie fails, the old session cookie
+        // may simply remain until it expires. The "Freighter switched..."
+        // message below stays the one the user sees.
+        apiLogout().catch(() => {});
         setAccount(null);
         setProblem({
           message: "Freighter switched to a different account. Connect again to continue as that account.",
@@ -92,7 +96,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await apiLogout();
+    setProblem(null);
+    try {
+      await apiLogout();
+    } catch {
+      // The cookie is httpOnly, so the client cannot clear it itself: showing
+      // the user as disconnected while it survives would sign them back in on
+      // the next reload. Keep the session shown and say what happened.
+      setProblem({
+        message: "Could not sign you out. Check your connection and try again.",
+        code: null,
+      });
+      return;
+    }
     setAccount(null);
   }, []);
 
