@@ -317,6 +317,7 @@ call it was built for.
 | `POST /v1/reexecutors` | Bearer | build `register_reexecutor()` → unsigned XDR |
 | `POST /v1/reexecutors/:id/withdraw` | Bearer | build `withdraw_stake()` → unsigned XDR (403 unless yours) |
 | `POST /v1/reexecutors/:id/relay` | Bearer | relay a signed stake or withdrawal (403 unless yours) |
+| `POST /v1/reexecutors/:id/heartbeat` | Bearer | marks a worker online without fetching work (204; 403 unless yours) |
 | `POST /v1/reexecutors/sync` | Bearer | mirror existing on-chain stake |
 | `GET /v1/reexecutors[/:id]` | — | stake, standing, record |
 | `GET /v1/reexecutors/:id/assignments` | Bearer | work queue (403 for another account's id) |

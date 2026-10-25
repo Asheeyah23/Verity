@@ -9,12 +9,15 @@ import { REPLAY_ENGINE, ReplayInfrastructureError, runDeterministicFunction } fr
 import { hasConnectivity, RetrievalTransientError, runRetrieval } from "./sandbox/retrieval.js";
 import { assertSep10Challenge } from "./sep10.js";
 import { NO_OUTPUT_HASH, voteMatches } from "./vote.js";
+import { startHeartbeat } from "./heartbeat.js";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:3001";
 const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = requireEnv("ESCROW_GATE_CONTRACT_ID");
 const POLL_MS = numberEnv("POLL_INTERVAL_MS", 3000, 250);
+/** Well inside the backend's REEXECUTOR_LIVENESS_S (default 60 s). */
+const HEARTBEAT_MS = numberEnv("HEARTBEAT_INTERVAL_MS", 15_000, 1000);
 // How long a retrieval target may stay unreachable before this worker
 // concludes it is the target's fault (never longer than half the window).
 const RETRIEVAL_RETRY_BUDGET_S = numberEnv("RETRIEVAL_RETRY_BUDGET_S", 120, 1);
@@ -306,6 +309,14 @@ async function main() {
     await pollOnce(reexecutor.id);
     return;
   }
+  // A replay can run for minutes; the assignment poll cannot, so liveness
+  // is reported on its own timer. A backend that predates the endpoint
+  // answers 404 and the poll keeps the worker online as before.
+  startHeartbeat(
+    () => api<unknown>(`/v1/reexecutors/${reexecutor.id}/heartbeat`, { method: "POST" }).then(() => {}),
+    HEARTBEAT_MS,
+    (err) => console.warn(`${tag} heartbeat failed (the assignment poll still reports liveness):`, err.message)
+  );
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {

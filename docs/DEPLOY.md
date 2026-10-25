@@ -265,7 +265,7 @@ integers except `REPLAY_OVERASSIGN` and `DB_STATEMENT_TIMEOUT_MS`, which also ac
 
 | Variable | Default | What it does |
 |---|---|---|
-| `REEXECUTOR_LIVENESS_S` | `60` | Seconds since a worker's last assignment poll during which it counts as online. Only online, active re-executors (and approved ones when the allowlist is enabled) receive assignments. Keep this well above the agent's `POLL_INTERVAL_MS` (default `3000` ms). |
+| `REEXECUTOR_LIVENESS_S` | `60` | Seconds since a worker's last assignment poll or heartbeat during which it counts as online. Only online, active re-executors (and approved ones when the allowlist is enabled) receive assignments. Keep this well above the agent's `POLL_INTERVAL_MS` (default `3000` ms) and `HEARTBEAT_INTERVAL_MS` (default `15000` ms). |
 | `REPLAY_OVERASSIGN` | `1` | Extra re-executors beyond the contract quorum for deterministic tasks or tasks escalated to full quorum; `0` disables spares. |
 | `REPLAY_REASSIGN_AFTER_S` | `120` | After this many seconds unanswered, an assignment stops counting toward quorum and another live worker is asked. The original row stays and a late vote still counts. At settlement, an unanswered assignment that had at least this long before finalisation is marked missed; younger ones are dropped without a mark. |
 | `DRAFT_TTL_S` | `3600` | Scheduler deletes drafts with no on-chain submission after this many seconds since `updated_at`; rebuilding a draft transaction restarts its age. Must outlast the built transaction's validity. |
