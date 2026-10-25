@@ -404,12 +404,17 @@ marketplace's Stellar account:
 }
 ```
 
-The request requires a valid URL, a `secret` of at least 8 characters, and
-a non-empty `events` array drawn from `submission.verified`,
+The request requires a valid URL of at most 2048 characters, a `secret` of 8
+to 256 characters, and a non-empty `events` array drawn from `submission.verified`,
 `submission.slashed` and `submission.disputed`; any other name is rejected
 with HTTP 400 and duplicates are stored once. The marketplace ID is a UUID;
 only its own account may register a webhook (otherwise HTTP 403). A
-successful registration returns the subscription row with HTTP 201.
+successful registration returns the subscription row with HTTP 201. A
+marketplace can hold at most 10 subscriptions (HTTP 409 beyond that);
+deactivating one does not free its slot. The URL must resolve to a public
+address: private, loopback, link-local, multicast and reserved ranges (and IPv6
+forms that wrap them) are refused with HTTP 400, both at registration and again
+at every delivery, which connects to the address it just checked.
 
 `GET /v1/marketplaces/:id/webhooks` lists the marketplace's subscriptions
 (`id`, `url`, `events`, `active`, `created_at`; the `secret` is never

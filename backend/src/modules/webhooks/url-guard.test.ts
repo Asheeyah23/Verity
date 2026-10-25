@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isPrivateAddress, assertPublicHttpUrl } from "./url-guard.js";
+import { isPrivateAddress, assertPublicHttpUrl, resolvePublicTarget } from "./url-guard.js";
 import { HttpError } from "../../http-error.js";
 
 const IP_TEST_CASES: Array<[string, boolean]> = [
@@ -35,6 +35,41 @@ const IP_TEST_CASES: Array<[string, boolean]> = [
   // Public IPv6
   ["2001:4860:4860::8888", false],
   ["2606:4700::1111", false],
+  // Ranges the first version of the guard missed
+  ["198.17.255.255", false],
+  ["198.18.0.1", true],
+  ["198.19.255.255", true],
+  ["198.20.0.0", false],
+  ["224.0.0.1", true],
+  ["239.255.255.250", true],
+  ["240.0.0.1", true],
+  ["255.255.255.255", true],
+  ["192.0.2.1", true],
+  ["203.0.113.9", true],
+  ["fec0::1", true],
+  ["febf::1", true],
+  ["ff02::1", true],
+  ["2001:db8::1", true],
+  ["100::1", true],
+  // IPv4 carried inside IPv6: judged by the IPv4 address inside
+  ["::ffff:7f00:1", true],
+  ["::ffff:a00:1", true],
+  ["::ffff:c0a8:101", true],
+  ["::ffff:a9fe:a9fe", true],
+  ["::ffff:808:808", false],
+  ["::ffff:8.8.8.8", false],
+  ["0:0:0:0:0:ffff:7f00:1", true],
+  ["64:ff9b::7f00:1", true],
+  ["64:ff9b::a9fe:a9fe", true],
+  ["64:ff9b::808:808", false],
+  ["2002:7f00:1::", true],
+  ["2002:808:808::", false],
+  ["::8.8.8.8", true],
+  // Malformed input is never public
+  ["not-an-ip", true],
+  ["1:2:3:4:5:6:7:8:9", true],
+  ["1::2::3", true],
+  ["", true],
 ];
 
 test("isPrivateAddress correctly classifies IP addresses and range boundaries", () => {
@@ -96,4 +131,25 @@ test("assertPublicHttpUrl rejects private IP literals", async () => {
 test("assertPublicHttpUrl accepts public IP literals without DNS lookup", async () => {
   const url = await assertPublicHttpUrl("https://8.8.8.8/hook");
   assert.equal(url.href, "https://8.8.8.8/hook");
+});
+
+test("resolvePublicTarget returns the checked address for the request to connect to", async () => {
+  const target = await resolvePublicTarget("https://8.8.4.4:8443/hook");
+  assert.equal(target.address, "8.8.4.4");
+  assert.equal(target.family, 4);
+  assert.equal(target.url.href, "https://8.8.4.4:8443/hook");
+
+  const v6 = await resolvePublicTarget("http://[2606:4700::1111]/hook");
+  assert.equal(v6.address, "2606:4700::1111");
+  assert.equal(v6.family, 6);
+});
+
+test("resolvePublicTarget rejects IPv4 hidden in IPv6 literals", async () => {
+  for (const url of ["http://[::ffff:7f00:1]/", "http://[::ffff:169.254.169.254]/", "http://[64:ff9b::a9fe:a9fe]/"]) {
+    await assert.rejects(
+      () => resolvePublicTarget(url),
+      (err: unknown) => err instanceof HttpError && err.statusCode === 400 && /non-public/.test(err.message),
+      url
+    );
+  }
 });

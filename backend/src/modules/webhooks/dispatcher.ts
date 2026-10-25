@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { db } from "../../db.js";
-import { assertPublicHttpUrl } from "./url-guard.js";
+import { resolvePublicTarget } from "./url-guard.js";
+import { postPinned } from "./post-pinned.js";
 
 export function getUrlOrigin(rawUrl: string): string {
   try {
@@ -61,8 +62,8 @@ export interface WebhookSubscriptionRecord {
 
 /**
  * Delivers a single webhook event to a subscription.
- * Handles SSRF guard checking, per-request timeout, response body cancellation,
- * and database status tracking with robust error handling.
+ * Handles SSRF guard checking with the checked address pinned for the request,
+ * an overall per-request timeout, and database status tracking.
  */
 export async function deliver(
   sub: WebhookSubscriptionRecord,
@@ -97,11 +98,11 @@ export async function deliver(
 
   try {
     // Re-checked at send time: the host may resolve somewhere else now than
-    // it did when the subscription was created. No redirects, for the same reason.
-    await assertPublicHttpUrl(sub.url);
-    const res = await fetch(sub.url, {
-      method: "POST",
-      redirect: "error",
+    // it did when the subscription was created. The request then connects to
+    // the address that was checked, so it cannot resolve elsewhere in between.
+    // No redirects, for the same reason.
+    const target = await resolvePublicTarget(sub.url);
+    const res = await postPinned(target, {
       headers: {
         "content-type": "application/json",
         "x-verity-delivery": deliveryId,
@@ -109,14 +110,11 @@ export async function deliver(
         "x-verity-signature": signature,
       },
       body,
-      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+      timeoutMs: DELIVERY_TIMEOUT_MS,
     });
 
-    const isOk = res.ok;
     const statusCode = res.status;
-
-    // Release connection immediately so it doesn't leak or wait on GC
-    await res.body?.cancel().catch(() => {});
+    const isOk = statusCode >= 200 && statusCode < 300;
 
     await db
       .updateTable("webhook_delivery")
