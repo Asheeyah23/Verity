@@ -225,6 +225,12 @@ Deterministic tasks run in a sandboxed JavaScript runtime:
    - Async functions returning a `Promise` serialize to `{}`. Write synchronous code.
 8. **Artifact upload limits.** Each artifact (function, input, claimed output) may be
    at most 262144 bytes (`ARTIFACT_MAX_BYTES`). The API request body limit is 1 MiB.
+   Each account may upload 30 artifacts per minute (`ARTIFACT_UPLOADS_PER_MINUTE`),
+   and the store holds at most 10 GiB (`ARTIFACT_MAX_TOTAL_BYTES`); uploading new
+   content past that returns HTTP 507. Content already stored never counts again.
+   Artifacts are **public**: `GET /v1/artifacts/:hash` needs no token, because
+   anyone must be able to fetch what a verdict was computed from. Do not upload
+   secrets.
 
 ### Canonical JSON and claimed outputs
 
@@ -306,7 +312,7 @@ call it was built for.
 | `GET /health`, `/health/live` | — | readiness (DB, RPC, indexer) / liveness |
 | `GET /v1/config` | — | the contract's live rules |
 | `POST /v1/artifacts` | Bearer | upload a content-addressed artifact |
-| `GET /v1/artifacts/:hash` | — | |
+| `GET /v1/artifacts/:hash` | — | public by design; 400 for a malformed hash, 404 if unknown |
 | `POST /v1/submissions` | Bearer | build `submit()` → unsigned XDR (idempotent, see below) |
 | `POST /v1/submissions/:id/relay` | Bearer | relay the signed XDR (403 unless you are the submitting agent) |
 | `GET /v1/submissions[/:id]` | — | status, replays, spot-checks, challenge |
@@ -356,6 +362,7 @@ Every error body is `{ "error": "<message>" }`, with one addition:
 | 400/403/404 | hand-written route checks | `{ "error": … }` — e.g. 404 `{ "error": "not found" }`, 403 `{ "error": "forbidden" }` on the ownership checks above |
 | 400/403/422/502/503/504 | relay checks | `{ "error": … }` |
 | 413 | artifact over `ARTIFACT_MAX_BYTES` (default 262144; request bodies cap at 1 MiB) | `{ "error": … }` |
+| 507 | artifact store is full (`ARTIFACT_MAX_TOTAL_BYTES`) | `{ "error": … }` |
 | 422 | the contract rejected the transaction | `{ "error": "EscrowGate rejected the transaction: <ErrorName>", "contract_error": "<ErrorName>" }` |
 | 500 | anything unexpected | `{ "error": "internal error" }` |
 

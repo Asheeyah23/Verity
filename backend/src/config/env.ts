@@ -52,6 +52,10 @@ const schema = z.object({
   DEPLOYMENT_NAME: z.string().default("testnet"),
   ARTIFACT_STORAGE_DIR: z.string().default("./.artifacts"),
   ARTIFACT_MAX_BYTES: z.coerce.number().int().positive().default(262_144),
+  /** Cap on everything in ARTIFACT_STORAGE_DIR; an upload that would pass it is refused (507). */
+  ARTIFACT_MAX_TOTAL_BYTES: z.coerce.number().int().positive().default(10 * 1024 ** 3),
+  /** Uploads per account (or address) per minute, tighter than the global limit. */
+  ARTIFACT_UPLOADS_PER_MINUTE: z.coerce.number().int().positive().default(30),
 
   // The indexer and keeper share one account sequence and one chain cursor,
   // so exactly one process may run them. Extra API-only instances set false.

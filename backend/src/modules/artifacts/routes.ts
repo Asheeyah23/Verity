@@ -1,12 +1,18 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../auth/plugin.js";
-import { storeArtifact, readArtifact } from "./storage.js";
+import { storeArtifact, readArtifact, StorageFullError } from "./storage.js";
 import { env } from "../../config/env.js";
 import * as path from "node:path";
 
 export async function artifactsRoutes(app: FastifyInstance) {
-  app.post("/v1/artifacts", { preHandler: requireAuth }, async (req, reply) => {
+  // Stricter than the global limit: each upload can write up to ARTIFACT_MAX_BYTES to disk.
+  const uploadOptions = {
+    preHandler: requireAuth,
+    config: { rateLimit: { max: env.ARTIFACT_UPLOADS_PER_MINUTE, timeWindow: "1 minute" } },
+  };
+
+  app.post("/v1/artifacts", uploadOptions, async (req, reply) => {
     const body = z
       .object({
         content_base64: z.string().min(1),
@@ -32,7 +38,16 @@ export async function artifactsRoutes(app: FastifyInstance) {
       reply.code(413);
       return { error: `artifact is larger than the ${env.ARTIFACT_MAX_BYTES}-byte limit` };
     }
-    const { contentHash } = await storeArtifact(content);
+    let contentHash: string;
+    try {
+      ({ contentHash } = await storeArtifact(content));
+    } catch (err) {
+      if (err instanceof StorageFullError) {
+        reply.code(507);
+        return { error: "artifact storage is full; try again later" };
+      }
+      throw err;
+    }
     reply.code(201);
     return {
       content_hash: contentHash,
