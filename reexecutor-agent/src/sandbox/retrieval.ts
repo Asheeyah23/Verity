@@ -3,6 +3,9 @@ import https from "node:https";
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 import { canonicalHash } from "./canonical.js";
+import { isPrivateAddress } from "./address.js";
+
+export { isPrivateAddress };
 
 /**
  * The input artifact of a retrieval task: the request the agent claims to
@@ -32,21 +35,6 @@ const TOTAL_TIMEOUT_MS = 30_000;
  * mismatch).
  */
 export class RetrievalTransientError extends Error {}
-
-export function isPrivateAddress(ip: string): boolean {
-  if (ip.includes(":")) {
-    const v6 = ip.toLowerCase();
-    return v6 === "::1" || v6 === "::" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe80") || v6.startsWith("::ffff:");
-  }
-  const [a, b] = ip.split(".").map(Number);
-  return (
-    a === 10 || a === 127 || a === 0 ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 169 && b === 254) ||
-    (a === 100 && b >= 64 && b <= 127)
-  );
-}
 
 interface PinnedTarget {
   url: URL;

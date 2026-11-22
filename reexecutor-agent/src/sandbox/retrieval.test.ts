@@ -227,6 +227,17 @@ describe("isPrivateAddress", () => {
     "::ffff:10.0.0.1",
     "FD00::1",
     "::FFFF:10.0.0.1",
+    // Ranges the first version of the check missed
+    "198.18.0.1",
+    "224.0.0.1",
+    "255.255.255.255",
+    "fec0::1",
+    "ff02::1",
+    "::ffff:7f00:1",
+    "::ffff:a9fe:a9fe",
+    "64:ff9b::a9fe:a9fe",
+    "2002:7f00:1::",
+    "not-an-ip",
   ];
 
   for (const ip of privateIps) {
@@ -247,6 +258,9 @@ describe("isPrivateAddress", () => {
     "169.253.1.1",
     "2001:4860:4860::8888",
     "2606:4700::1111",
+    "198.20.0.0",
+    "::ffff:808:808",
+    "64:ff9b::808:808",
   ];
 
   for (const ip of publicIps) {

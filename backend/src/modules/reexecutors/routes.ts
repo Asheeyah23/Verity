@@ -235,11 +235,32 @@ export async function reexecutorsRoutes(app: FastifyInstance) {
     return rows.map((row) => present(row, stats.get(row.id) ?? NO_STATS, cfg.reexecutor_allowlist));
   });
 
+  // Liveness signal that does not depend on the work loop: a worker busy on
+  // a slow replay cannot poll for assignments, and would otherwise age out of
+  // REEXECUTOR_LIVENESS_S and stop receiving work. Like the poll, it writes
+  // last_seen_at only for the worker's own account, so "online" still means a
+  // worker is really running, not merely that the account once staked.
+  app.post("/v1/reexecutors/:id/heartbeat", { preHandler: requireAuth }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(req.params);
+    const updated = await db
+      .updateTable("reexecutor")
+      .set({ last_seen_at: new Date() })
+      .where("id", "=", params.id)
+      .where("stellar_account", "=", req.stellarAccount!)
+      .returning("id")
+      .executeTakeFirst();
+    if (!updated) {
+      reply.code(403);
+      return { error: "forbidden" };
+    }
+    reply.code(204);
+  });
+
   // Internal addition (beyond the PRD's literal §9 list): lets a
   // reexecutor-agent worker poll for work assigned to it, authenticated as
-  // itself via the same SEP-10 JWT. This poll is also the liveness signal —
-  // the only thing that writes last_seen_at — so "online" means a worker is
-  // really asking for work, not merely that the account once staked.
+  // itself via the same SEP-10 JWT. This poll also writes last_seen_at, as
+  // does the heartbeat, so "online" means a worker is really asking for work,
+  // not merely that the account once staked.
   app.get("/v1/reexecutors/:id/assignments", { preHandler: requireAuth }, async (req, reply) => {
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const row = await loadReexecutor(params.id);
