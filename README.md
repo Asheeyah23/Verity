@@ -46,7 +46,10 @@ Every verdict records how it was reached, and the dashboard shows it:
 Anyone can open a bonded challenge inside the window. If the challenge is
 upheld, the challenger gets their bond back plus 20% of the agent's, and the
 rest of the agent's bond goes to the admin/treasury account. If it is rejected,
-the challenger's bond goes to the agent.
+the challenger's bond goes to the agent. The agent cannot challenge its own
+submission: the contract refuses the address that submitted. It cannot tell
+when a different address belongs to the same agent, so that is not prevented
+on-chain.
 
 A re-executor whose vote a bonded consensus proves wrong loses a fixed share
 of its stake (10% as deployed). The amount is set on-chain and applied when

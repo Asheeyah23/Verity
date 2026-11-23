@@ -574,6 +574,15 @@ impl EscrowGate {
     ) -> Result<(), Error> {
         challenger.require_auth();
         let sub = storage::get_submission(&e, submission_id).ok_or(Error::SubmissionNotFound)?;
+        // The agent may not challenge its own submission, as it may not vote on
+        // it (AgentCannotAttest). On a slash the challenger is paid a share of
+        // the forfeited bond, so a self-challenge would hand part of that bond
+        // back to the party that forfeited it, and it would take the one
+        // challenge slot from an honest challenger. Only this address is
+        // refused: another address the agent controls looks like anyone else.
+        if challenger == sub.agent {
+            return Err(Error::AgentCannotChallenge);
+        }
         if sub.finalized {
             return Err(Error::ChallengeWindowClosed);
         }

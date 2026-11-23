@@ -1793,6 +1793,58 @@ fn the_submitting_agent_cannot_attest_its_own_submission() {
 }
 
 #[test]
+fn the_submitting_agent_cannot_challenge_its_own_submission() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    // The agent can afford the bond, so that is not why it is refused.
+    let agent_before = w.token.balance(&agent);
+    let held_before = w.token.balance(&w.client.address);
+    assert!(agent_before >= 50 * XLM);
+
+    assert_eq!(
+        w.client.try_open_challenge(&agent, &id, &(50 * XLM)),
+        Err(Ok(Error::AgentCannotChallenge))
+    );
+    // No tokens moved and no challenge was recorded.
+    assert_eq!(w.token.balance(&agent), agent_before);
+    assert_eq!(w.token.balance(&w.client.address), held_before);
+    assert!(w.client.get_challenge(&id).is_none());
+
+    // The one challenge slot is still free, and anyone else opens it as before.
+    let challenger = Address::generate(&e);
+    fund(&w, &challenger, 100 * XLM);
+    w.client.open_challenge(&challenger, &id, &(50 * XLM));
+    assert_eq!(w.token.balance(&challenger), 50 * XLM);
+    assert_eq!(w.token.balance(&w.client.address), held_before + 50 * XLM);
+    let chal = w.client.get_challenge(&id).unwrap();
+    assert_eq!(chal.challenger, challenger);
+    assert_eq!(chal.bond, 50 * XLM);
+}
+
+#[test]
+fn an_agent_may_still_challenge_another_agents_submission() {
+    let e = Env::default();
+    let w = setup(&e);
+    let (first, second) = (Address::generate(&e), Address::generate(&e));
+    let first_id = submit_default(&w, &first);
+    let second_id = submit_default(&w, &second);
+
+    // Being an agent is not what is refused: challenging your own work is.
+    w.client.open_challenge(&second, &first_id, &(50 * XLM));
+    assert_eq!(
+        w.client.get_challenge(&first_id).unwrap().challenger,
+        second
+    );
+    assert_eq!(
+        w.client
+            .try_open_challenge(&second, &second_id, &(50 * XLM)),
+        Err(Ok(Error::AgentCannotChallenge))
+    );
+}
+
+#[test]
 fn a_vote_must_agree_with_the_hash_it_reports() {
     let e = Env::default();
     let w = setup(&e);
