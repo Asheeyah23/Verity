@@ -46,7 +46,10 @@ Every verdict records how it was reached, and the dashboard shows it:
 Anyone can open a bonded challenge inside the window. If the challenge is
 upheld, the challenger gets their bond back plus 20% of the agent's, and the
 rest of the agent's bond goes to the admin/treasury account. If it is rejected,
-the challenger's bond goes to the agent. The agent cannot challenge its own
+the challenger's bond goes to the agent. A challenge has to be opened while the
+outcome is still undecided: once the bonded votes already form a supermajority
+either way, `open_challenge` is refused and the submission settles through
+`finalize`. The agent cannot challenge its own
 submission: the contract refuses the address that submitted. It cannot tell
 when a different address belongs to the same agent, so that is not prevented
 on-chain.

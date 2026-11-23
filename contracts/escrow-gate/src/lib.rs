@@ -593,6 +593,18 @@ impl EscrowGate {
         if storage::get_challenge(&e, submission_id).is_some() {
             return Err(Error::ChallengeAlreadyOpen);
         }
+        // A challenge is a bet against an outcome that is still open. Once the
+        // bonded votes already decide the submission, in either direction, a
+        // challenger adds no information and takes no risk: after a mismatch
+        // consensus they would collect the challenger's share of a slash that
+        // was already certain. finalize() settles such a submission as it is.
+        //
+        // This is checked when the challenge is opened and not again: votes
+        // cast afterwards still count, and may form the consensus that
+        // resolve_challenge needs.
+        if consensus_outcome(&sub)?.is_some() {
+            return Err(Error::ConsensusAlreadyReached);
+        }
         let min_bond = checked_bps(sub.escrow_value, sub.cfg_challenger_bond_min_bps)?;
         // Mirrors submit(): the proportional minimum rounds down to zero for
         // a tiny escrow, and a challenge with nothing at stake is free.

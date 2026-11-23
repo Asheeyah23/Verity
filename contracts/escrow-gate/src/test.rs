@@ -1844,6 +1844,130 @@ fn an_agent_may_still_challenge_another_agents_submission() {
     );
 }
 
+/// Registers `count` re-executors and has each cast the given vote on `id`.
+fn cast_votes(w: &World, id: u64, count: usize, matched: bool) {
+    let hash = BytesN::from_array(&w.e, &[if matched { 3u8 } else { 9u8 }; 32]);
+    for _ in 0..count {
+        let rex = Address::generate(&w.e);
+        register_rex(w, &rex);
+        w.client.attest_replay(&rex, &id, &hash, &matched);
+    }
+}
+
+#[test]
+fn a_challenge_is_refused_once_a_mismatch_supermajority_decides_the_submission() {
+    let e = Env::default();
+    let w = setup(&e); // quorum 3, 66% supermajority, 20% of a slash to a challenger
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    cast_votes(&w, id, 3, false);
+
+    // The answer is already on-chain: a challenge now would risk nothing and
+    // collect a share of the slash.
+    let challenger = Address::generate(&e);
+    fund(&w, &challenger, 1000 * XLM);
+    let held = w.token.balance(&w.client.address);
+    assert_eq!(
+        w.client.try_open_challenge(&challenger, &id, &(50 * XLM)),
+        Err(Ok(Error::ConsensusAlreadyReached))
+    );
+    assert_eq!(w.token.balance(&challenger), 1000 * XLM);
+    assert_eq!(w.token.balance(&w.client.address), held);
+    assert!(w.client.get_challenge(&id).is_none());
+
+    // finalize() settles it as it stands, and the whole forfeited bond goes
+    // to the treasury: there is no challenger to pay a share to.
+    let admin_before = w.token.balance(&w.admin);
+    assert_eq!(w.client.finalize(&id), Verdict::Slashed);
+    assert_eq!(w.token.balance(&w.admin), admin_before + 50 * XLM);
+    assert_eq!(w.token.balance(&challenger), 1000 * XLM);
+}
+
+#[test]
+fn a_challenge_is_refused_once_a_match_supermajority_decides_the_submission() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    cast_votes(&w, id, 3, true);
+
+    let challenger = Address::generate(&e);
+    fund(&w, &challenger, 1000 * XLM);
+    assert_eq!(
+        w.client.try_open_challenge(&challenger, &id, &(50 * XLM)),
+        Err(Ok(Error::ConsensusAlreadyReached))
+    );
+    assert_eq!(w.token.balance(&challenger), 1000 * XLM);
+    assert!(w.client.get_challenge(&id).is_none());
+
+    assert_eq!(w.client.finalize(&id), Verdict::Verified);
+    assert_eq!(w.token.balance(&agent), 1000 * XLM);
+}
+
+#[test]
+fn a_challenge_is_still_accepted_while_the_votes_decide_nothing() {
+    // Below the quorum of three, whichever way the votes point.
+    for (matches, mismatches) in [(0, 1), (0, 2), (1, 0), (2, 0), (1, 1)] {
+        let e = Env::default();
+        let w = setup(&e);
+        let agent = Address::generate(&e);
+        let id = submit_default(&w, &agent);
+        cast_votes(&w, id, matches, true);
+        cast_votes(&w, id, mismatches, false);
+
+        let challenger = Address::generate(&e);
+        fund(&w, &challenger, 1000 * XLM);
+        w.client.open_challenge(&challenger, &id, &(50 * XLM));
+        assert_eq!(
+            w.client.get_challenge(&id).unwrap().challenger,
+            challenger,
+            "{matches} match, {mismatches} mismatch"
+        );
+    }
+
+    // A quorum, but split evenly: no side has 66% of the bonded weight.
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    cast_votes(&w, id, 2, true);
+    cast_votes(&w, id, 2, false);
+    let challenger = Address::generate(&e);
+    fund(&w, &challenger, 1000 * XLM);
+    w.client.open_challenge(&challenger, &id, &(50 * XLM));
+    assert_eq!(w.token.balance(&challenger), 950 * XLM);
+    assert_eq!(w.client.get_challenge(&id).unwrap().bond, 50 * XLM);
+}
+
+#[test]
+fn votes_cast_after_a_challenge_is_opened_can_still_decide_it() {
+    // The consensus check is made when the challenge is opened, not after:
+    // resolve_challenge depends on the votes that follow.
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    cast_votes(&w, id, 2, false);
+
+    let challenger = Address::generate(&e);
+    fund(&w, &challenger, 1000 * XLM);
+    w.client.open_challenge(&challenger, &id, &(50 * XLM));
+
+    // The third mismatch vote completes the supermajority.
+    cast_votes(&w, id, 1, false);
+    assert_eq!(
+        w.client
+            .resolve_challenge(&id, &ResolutionMethod::ReexecutionConsensus),
+        Verdict::Slashed
+    );
+    // This challenger took the risk before the outcome was known, and is paid.
+    assert_eq!(w.token.balance(&challenger), 1000 * XLM + 10 * XLM);
+    assert_eq!(
+        w.client.get_challenge(&id).unwrap().resolution,
+        Resolution::Upheld
+    );
+}
+
 #[test]
 fn a_vote_must_agree_with_the_hash_it_reports() {
     let e = Env::default();
