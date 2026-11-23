@@ -246,10 +246,12 @@ async function processAssignment(a: Assignment) {
       return;
     }
     // #23 AlreadyAttested: our vote is already on-chain. #32 ChallengeWindowClosed:
-    // the submission was finalized before we got to it. Either way there is
-    // nothing left for us to do for this submission.
+    // the submission was finalized before we got to it, or its window closed
+    // with no challenge open, after which the contract takes no more votes on
+    // it. Either way there is nothing left for us to do for this submission,
+    // and retrying would never succeed.
     if (code !== "23" && code !== "32") throw err;
-    console.log(`${tag}   nothing to do (already attested or already finalized)`);
+    console.log(`${tag}   nothing to do (already attested, or too late to vote)`);
   }
   attested.add(a.chain_submission_id);
   firstUnreachableAt.delete(a.chain_submission_id);

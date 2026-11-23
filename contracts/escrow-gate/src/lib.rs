@@ -488,6 +488,21 @@ impl EscrowGate {
         if sub.finalized {
             return Err(Error::ChallengeWindowClosed);
         }
+        // With no challenge open, the verdict of a window is settled the moment
+        // the window closes: finalize() only reads the tally, whenever somebody
+        // calls it. A vote accepted after that would change a verdict that was
+        // already decided, and the outcome would depend on who reached the
+        // chain first. The deadline second is closed, as it is for
+        // open_challenge and finalize.
+        //
+        // A challenged submission is the exception: resolve_challenge needs a
+        // consensus, and that may only form after the window, so votes on it
+        // are accepted until it is finalized.
+        if storage::get_challenge(&e, submission_id).is_none()
+            && e.ledger().timestamp() >= sub.submitted_at.saturating_add(sub.challenge_window_s)
+        {
+            return Err(Error::ChallengeWindowClosed);
+        }
         // The agent being checked cannot vote on its own work.
         if reexecutor == sub.agent {
             return Err(Error::AgentCannotAttest);
