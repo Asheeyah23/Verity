@@ -22,6 +22,7 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ id: string; txHash: string; stake: bigint } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const floor = BigInt(config.min_stake_floor);
   const floorXlm = stroopsToXlm(config.min_stake_floor);
@@ -33,6 +34,19 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
       : wrongNetworkMessage()
     : null;
   const displayError = wrongNetworkNotice ?? error;
+
+  const workerCommand = `git clone https://github.com/DevQwinB/Verity && cd Verity && pnpm install
+BACKEND_URL=${config.public_api_url} \\
+NETWORK_PASSPHRASE="${config.network_passphrase}" \\
+ESCROW_GATE_CONTRACT_ID=${config.escrow_gate_contract_id} \\
+REEXECUTOR_SECRET_KEY=<secret of the account you staked with> \\
+pnpm --filter @verity/reexecutor-agent start`;
+
+  function handleCopy() {
+    navigator.clipboard.writeText(workerCommand);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   async function handleRegister() {
     if (!account || !networkOk) return;
@@ -103,10 +117,7 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
             )}
             <li>
               Staking alone does nothing. Work is only assigned to an account whose worker is
-              running and polling. Start one with your own key:{" "}
-              <code className="rounded-md bg-surface px-1.5 py-0.5 font-mono text-xs text-text-primary">
-                pnpm --filter @verity/reexecutor-agent start
-              </code>
+              running and polling. See the worker setup instructions below.
             </li>
             <li>
               A vote that a bonded consensus proves wrong costs {config.reexecutor_slash_bps / 100}% of
@@ -193,6 +204,48 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
               )}
             </>
           )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <h2 className="font-medium">Worker setup</h2>
+        </CardHeader>
+        <CardBody className="space-y-3">
+          <p className="text-sm text-text-secondary">
+            Work is only assigned to accounts whose worker is actively running and polling. Start one with this deployment&apos;s settings:
+          </p>
+          <div className="relative">
+            <pre className="overflow-x-auto rounded-lg border border-border-strong bg-surface p-4 font-mono text-xs text-text-primary">
+              {workerCommand}
+            </pre>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="absolute right-3 top-3 rounded-md border border-border-strong bg-surface-muted px-2.5 py-1 text-xs font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <p className="text-xs text-status-pending">
+            Warning: Never paste your secret key into this website — only provide it directly in your own shell or a .env file.
+          </p>
+          <p className="text-xs text-text-tertiary">
+            See{" "}
+            <a
+              href="https://github.com/DevQwinB/Verity/blob/main/reexecutor-agent/.env.example"
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent underline-offset-2 hover:underline"
+            >
+              reexecutor-agent/.env.example
+            </a>{" "}
+            for all configuration options, or run using Docker with{" "}
+            <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs text-text-primary">
+              reexecutor-agent/Dockerfile
+            </code>
+            .
+          </p>
         </CardBody>
       </Card>
     </div>

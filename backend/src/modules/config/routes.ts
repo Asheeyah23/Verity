@@ -12,6 +12,7 @@ export async function configRoutes(app: FastifyInstance) {
       deployment: env.DEPLOYMENT_NAME,
       network_passphrase: env.NETWORK_PASSPHRASE,
       escrow_gate_contract_id: env.ESCROW_GATE_CONTRACT_ID,
+      public_api_url: `${env.PUBLIC_SCHEME}://${env.WEB_AUTH_DOMAIN}`,
       bond_asset: "native",
       min_stake_floor: cfg.min_stake_floor.toString(),
       quorum_min_reexecutors: cfg.quorum_min_reexecutors,

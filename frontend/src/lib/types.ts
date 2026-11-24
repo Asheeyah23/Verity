@@ -153,6 +153,7 @@ export interface GateConfig {
   deployment: string;
   network_passphrase: string;
   escrow_gate_contract_id: string;
+  public_api_url: string;
   min_stake_floor: string;
   quorum_min_reexecutors: number;
   quorum_supermajority_bps: number;
