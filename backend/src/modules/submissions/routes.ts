@@ -13,6 +13,7 @@ import { findOrCreateMarketplaceForAccount } from "../marketplaces/routes.js";
 import { artifactExists } from "../artifacts/storage.js";
 import { submitBody } from "./schema.js";
 import { decideSupersede, type ChainTxStatus } from "./supersede.js";
+import { refuseDifferentSubmission } from "./idempotency.js";
 
 /** Decides whether a retry may replace an unconfirmed draft's transaction.
  * Returns the response to send when it may not (the earlier transaction is
@@ -108,11 +109,15 @@ export async function submissionsRoutes(app: FastifyInstance) {
       .where("agent_id", "=", agent)
       .executeTakeFirst();
     if (existing?.chain_submission_id) {
-      // Already signed and on-chain: nothing left to sign.
+      // Already signed and on-chain: nothing left to sign. Only an identical
+      // retry is answered with it; a changed request gets 409, or the caller
+      // would be told that the submission it just edited exists.
+      refuseDifferentSubmission(existing, body);
       return { submission: existing, unsigned_transaction_xdr: null, network_passphrase: env.NETWORK_PASSPHRASE };
     }
     if (existing && (await holdBackUnconfirmedDraft(existing)) === "landed") {
       // The relayed transaction is on-chain; the indexer attaches the id.
+      refuseDifferentSubmission(existing, body);
       return { submission: existing, unsigned_transaction_xdr: null, network_passphrase: env.NETWORK_PASSPHRASE };
     }
 
@@ -218,6 +223,7 @@ export async function submissionsRoutes(app: FastifyInstance) {
       }
 
       if (raced.chain_submission_id || (await holdBackUnconfirmedDraft(raced)) === "landed") {
+        refuseDifferentSubmission(raced, body);
         return { submission: raced, unsigned_transaction_xdr: null, network_passphrase: env.NETWORK_PASSPHRASE };
       }
 

@@ -412,8 +412,9 @@ relay:
 | Case | Response |
 |---|---|
 | key used by a *different* account | keys are scoped to the authenticated account; another account may reuse the same key independently (201 with its own draft) |
-| same account, submission already on-chain | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign |
-| same account, relayed transaction already landed | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign; the indexer attaches `chain_submission_id` |
+| same account, submission already on-chain, same fields | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign |
+| same account, relayed transaction already landed, same fields | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign; the indexer attaches `chain_submission_id` |
+| same account, submission already on-chain or already landed, any field changed | 409 `{ "error": "idempotency_key was already used for a different submission (<fields> differ). …" }` — the earlier submission is unchanged; send the new one with a new key |
 | same account, draft relayed and possibly still landing (within the 5.5-minute validity window) | 409 `{ "error": "An earlier attempt for this idempotency_key was already sent to the network and may still confirm. Retry in a few minutes; it will resolve to that submission if it lands." }` — retry after a few minutes |
 | same account, draft never relayed, or earlier relay failed or expired | draft updated, fresh transaction built; 200 `{ submission, unsigned_transaction_xdr, network_passphrase }` |
 | new key for this account | 201 with the same three fields |
