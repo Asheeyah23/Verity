@@ -39,7 +39,7 @@ function requireEnv(name: string): string {
 /** A numeric setting: unset or empty uses `fallback`; anything else must be a
  * finite number >= `min`, or the agent refuses to start. A bare `Number(...)`
  * turned a typo into NaN, i.e. a 1 ms poll loop or no retrieval retry wait. */
-function numberEnv(name: string, fallback: number, min: number): number {
+export function numberEnv(name: string, fallback: number, min: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
@@ -485,10 +485,10 @@ async function main() {
   const retrievalRetryBudgetS = numberEnv("RETRIEVAL_RETRY_BUDGET_S", 120, 1);
   // Any endpoint this worker must be able to reach anyway. If even this fails,
   // the problem is our network, and an unreachable target proves nothing.
-  const connectivityCheckUrl = process.env.CONNECTIVITY_CHECK_URL ?? rpcUrl;
+  const connectivityCheckUrl = process.env.CONNECTIVITY_CHECK_URL || rpcUrl;
   // When CONNECTIVITY_CHECK_URL is a private address, this public endpoint must
   // be reachable to prove internet access before voting mismatch on an unreachable target.
-  const internetCheckUrl = process.env.INTERNET_CHECK_URL ?? defaultInternetCheckUrl(networkPassphrase);
+  const internetCheckUrl = process.env.INTERNET_CHECK_URL || defaultInternetCheckUrl(networkPassphrase);
   const once = process.argv.includes("--once");
   // SEP-10 trust anchors. All three are optional: anything missing is
   // discovered once from the backend's /.well-known/stellar.toml at startup,

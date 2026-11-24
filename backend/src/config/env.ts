@@ -102,7 +102,18 @@ export const envSchema = z.object({
   KEEPER_TX_TIMEOUT_S: z.coerce.number().int().min(10).default(30),
 });
 
-const parsed = envSchema.safeParse(process.env);
+export const preprocessedSchema = z.preprocess((val) => {
+  if (typeof val !== "object" || val === null) return val;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(val)) {
+    if (v !== "") {
+      out[k] = v;
+    }
+  }
+  return out;
+}, envSchema);
+
+const parsed = preprocessedSchema.safeParse(process.env);
 if (!parsed.success) {
   console.error("Invalid environment configuration:");
   for (const issue of parsed.error.issues) {

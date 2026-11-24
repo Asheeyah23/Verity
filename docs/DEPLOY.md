@@ -278,16 +278,9 @@ integers except `REPLAY_OVERASSIGN` and `DB_STATEMENT_TIMEOUT_MS`, which also ac
 | `RATE_LIMIT_PER_MINUTE` | `300` | Requests per minute per client address, and again per account with a valid bearer token. Both apply, so extra accounts do not add address budget. `/health*` is exempt; `X-Forwarded-For` supplies the address only with `TRUST_PROXY=true`. |
 | `AUTH_REQUESTS_PER_MINUTE` | `20` | Requests per minute per client address to `GET /auth` and `POST /auth`, which mint identities. Far below `RATE_LIMIT_PER_MINUTE` so signing in as many accounts is slow. |
 
-Outside Docker, add these settings to `backend/.env`, loaded by `dotenv`,
-and restart the backend. `backend/.env.example` shows commented defaults;
-uncomment only the values you want to override.
-
-The current `docker-compose.yml` passes a fixed `backend.environment` list
-and has no `env_file`; it does **not** forward these variables. Adding
-them to the root `.env` or `backend/.env` alone does not configure the
-container. Defaults apply unless you also add the desired variables to the
-backend service's `environment` mapping (or a Compose override) and recreate
-the backend container. This repository's Compose file is unchanged here.
+Add these settings to the root `.env` (forwarded to containers by `docker-compose.yml`)
+or to `backend/.env` outside Docker. `.env.example` and `backend/.env.example` show
+commented defaults; uncomment only the values you want to override.
 
 Request bodies are limited to 1,048,576 bytes (1 MiB), except on
 `POST /v1/artifacts`. That route takes the artifact as base64 inside JSON, four
