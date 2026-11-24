@@ -11,6 +11,9 @@
 //! fixing the Verity `EscrowGate` and payment token addresses so setup cannot
 //! be front-run.
 
+mod events;
+
+use events::{EscrowCreated, EscrowReleased};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 use verity_common::{Error, SubmissionRecord, Verdict};
 
@@ -30,6 +33,21 @@ struct EscrowRecord {
     poster: Address,
     amount: i128,
     released: bool,
+}
+
+// The thresholds EscrowGate uses (contracts/escrow-gate/src/storage.rs). An
+// entry is extended whenever it is written, so a bounty that waits weeks for
+// work does not have its record archived before release() needs it.
+const BUMP_THRESHOLD: u32 = 100_000;
+const BUMP_TO: u32 = 500_000;
+
+/// Extends an escrow's record and the instance. The instance holds the gate,
+/// the token and the id counter, and its TTL also covers the contract code.
+fn bump(e: &Env, escrow_id: u64) {
+    e.storage()
+        .persistent()
+        .extend_ttl(&DataKey::Escrow(escrow_id), BUMP_THRESHOLD, BUMP_TO);
+    e.storage().instance().extend_ttl(BUMP_THRESHOLD, BUMP_TO);
 }
 
 #[contract]
@@ -59,6 +77,14 @@ impl ExampleMarketplaceEscrow {
     /// own existing escrow behavior, unchanged by integrating Verity.
     pub fn create_escrow(e: Env, poster: Address, payee: Address, amount: i128) -> Result<u64, Error> {
         poster.require_auth();
+        // An escrow of zero could never be released: EscrowGate refuses a
+        // submission with no escrow value, and release() needs the two amounts
+        // to be equal. A negative one would only fail later, inside the token
+        // transfer, with a host error. Both are refused here, before anything
+        // moves.
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
         let bond_asset: Address = e
             .storage()
             .instance()
@@ -71,8 +97,22 @@ impl ExampleMarketplaceEscrow {
         e.storage().instance().set(&DataKey::NextId, &(id + 1));
         e.storage().persistent().set(
             &DataKey::Escrow(id),
-            &EscrowRecord { payee, poster, amount, released: false },
+            &EscrowRecord {
+                payee: payee.clone(),
+                poster: poster.clone(),
+                amount,
+                released: false,
+            },
         );
+        bump(&e, id);
+
+        EscrowCreated {
+            escrow_id: id,
+            poster,
+            payee,
+            amount,
+        }
+        .publish(&e);
         Ok(id)
     }
 
@@ -128,20 +168,26 @@ impl ExampleMarketplaceEscrow {
         let token = soroban_sdk::token::TokenClient::new(&e, &bond_asset);
         let contract_address = e.current_contract_address();
 
-        match verdict {
-            Verdict::Verified => {
-                token.transfer(&contract_address, rec.payee.clone(), &rec.amount);
-                rec.released = true;
-            }
-            Verdict::Slashed | Verdict::ExpiredUnverified => {
-                token.transfer(&contract_address, rec.poster.clone(), &rec.amount);
-                rec.released = true;
-            }
+        let to = match verdict {
+            Verdict::Verified => rec.payee.clone(),
+            Verdict::Slashed | Verdict::ExpiredUnverified => rec.poster.clone(),
             Verdict::Pending | Verdict::Disputed => {
                 return Err(Error::ChallengeWindowNotElapsed);
             }
-        }
+        };
+        token.transfer(&contract_address, to.clone(), &rec.amount);
+        rec.released = true;
         e.storage().persistent().set(&DataKey::Escrow(escrow_id), &rec);
+        bump(&e, escrow_id);
+
+        EscrowReleased {
+            escrow_id,
+            submission_id,
+            to,
+            amount: rec.amount,
+            verdict,
+        }
+        .publish(&e);
         Ok(())
     }
 }
