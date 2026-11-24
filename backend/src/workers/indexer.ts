@@ -3,7 +3,8 @@ import { sql } from "kysely";
 import { db } from "../db.js";
 import { server } from "../chain/rpc.js";
 import { env } from "../config/env.js";
-import { fromChainVerdict, fromChainResolution, fromChainResolutionMethod } from "../chain/mappers.js";
+import { fromChainVerdict } from "../chain/mappers.js";
+import { challengeClosure } from "./challenge-events.js";
 import {
   assignReplayJobs,
   escalateAgentPendingSubmissions,
@@ -302,7 +303,6 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
 
     case "challenge_resolved": {
       const chainSubmissionId = String(topic[1]);
-      const v = value as { resolution: unknown; method: unknown };
       const sub = await db
         .selectFrom("submission")
         .selectAll()
@@ -311,13 +311,36 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
       if (sub) {
         await db
           .updateTable("challenge")
-          .set({
-            resolution: fromChainResolution(v.resolution),
-            resolution_method: challengeResolutionMethod(v.method),
-            resolved_at: new Date(),
-          })
+          .set({ ...challengeClosure("challenge_resolved", value), resolved_at: new Date() })
           .where("submission_id", "=", sub.id)
           .where("resolved_at", "is", null)
+          .execute();
+      }
+      break;
+    }
+
+    // Published by finalize() when a challenge lapsed with no resolution.
+    // A gate deployed before the event existed never sends it; for those,
+    // recordTerminalVerdict closes the row when the submission expires.
+    case "challenge_expired": {
+      const chainSubmissionId = String(topic[1]);
+      const sub = await db
+        .selectFrom("submission")
+        .select(["id"])
+        .where("chain_submission_id", "=", chainSubmissionId)
+        .executeTakeFirst();
+      if (sub) {
+        // The verdict path may have closed the row first, so the outcome is
+        // written wherever it is still missing and the time the row was
+        // first closed is kept.
+        await db
+          .updateTable("challenge")
+          .set({
+            ...challengeClosure("challenge_expired", value),
+            resolved_at: sql<Date>`coalesce(resolved_at, now())`,
+          })
+          .where("submission_id", "=", sub.id)
+          .where("resolution", "is", null)
           .execute();
       }
       break;
@@ -399,13 +422,6 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
       break;
     }
   }
-}
-
-/** A challenge row only ever records a resolution the contract accepted;
- * anything else (None, or a method this deployment cannot use) stays null. */
-function challengeResolutionMethod(v: unknown): "reexecution_consensus" | "zk_proof" | null {
-  const method = fromChainResolutionMethod(v);
-  return method === "reexecution_consensus" || method === "zk_proof" ? method : null;
 }
 
 /** Mirrors invariant 1 off-chain: as soon as a fresh replay tally implies a

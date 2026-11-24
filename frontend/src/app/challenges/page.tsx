@@ -11,7 +11,8 @@ import { TESTNET_EXPLORER_TX } from "../../lib/config";
 export const metadata: Metadata = { title: "Challenges" };
 
 /** What actually happened to a challenge, from the mirrored chain state. An
- * expired challenge is closed with no resolution — it is neither open nor decided. */
+ * expired challenge is closed as `expired` — it is neither open nor decided. A
+ * row closed before that outcome was stored has a closing time and no resolution. */
 function outcome(c: ChallengeListItem): { label: string; tone: "pending" | "slashed" | "verified" | "expired"; note: string } {
   if (c.resolution === "upheld") {
     return { label: "Upheld", tone: "slashed", note: "Re-execution consensus found the work wrong" };
@@ -19,7 +20,7 @@ function outcome(c: ChallengeListItem): { label: string; tone: "pending" | "slas
   if (c.resolution === "rejected") {
     return { label: "Rejected", tone: "verified", note: "Re-execution consensus found the work right" };
   }
-  if (c.resolved_at) {
+  if (c.resolution === "expired" || c.resolved_at) {
     return { label: "Expired", tone: "expired", note: "No consensus was reached; both bonds returned" };
   }
   return { label: "Open", tone: "pending", note: "Awaiting re-execution consensus" };

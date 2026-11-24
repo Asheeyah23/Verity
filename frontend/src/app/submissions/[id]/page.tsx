@@ -321,7 +321,7 @@ export default async function SubmissionDetailPage({
                   ? "Upheld by bonded re-execution consensus: the work was found wrong. The challenger got their bond back plus a share of the agent's."
                   : challenge.resolution === "rejected"
                     ? "Rejected by bonded re-execution consensus: the work was found right. The challenger's bond went to the agent."
-                    : challenge.resolved_at
+                    : challenge.resolution === "expired" || challenge.resolved_at
                       ? "Expired: re-executors did not reach a consensus within a further window. Both bonds were returned."
                       : "Open. It resolves when a quorum of re-executors reaches consensus, or expires one window after it was opened."}
               </p>

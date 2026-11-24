@@ -37,7 +37,9 @@ describe("fromChainResolution", () => {
   const cases = [
     { name: "Upheld", expected: "upheld" },
     { name: "Rejected", expected: "rejected" },
+    { name: "Expired", expected: "expired" },
     { name: "None", expected: null },
+    { name: "Whatever", expected: null },
   ] as const;
 
   for (const { name, expected } of cases) {

@@ -57,10 +57,13 @@ export async function recordTerminalVerdict(submissionRowId: string, status: str
   }
 
   if (terminal === "expired_unverified") {
-    // A challenge that lapsed without a resolution is closed out off-chain too.
+    // A challenge that lapsed without a resolution is closed out off-chain
+    // too, as expired: a challenged submission only ends this way when its
+    // challenge expired. The indexer does the same on ChallengeExpired, but a
+    // gate deployed before that event existed never publishes it.
     await db
       .updateTable("challenge")
-      .set({ resolved_at: new Date() })
+      .set({ resolved_at: new Date(), resolution: "expired" })
       .where("submission_id", "=", sub.id)
       .where("resolved_at", "is", null)
       .execute();
