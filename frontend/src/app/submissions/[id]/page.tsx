@@ -12,6 +12,7 @@ import { stroopsToXlm, truncateMiddle, formatDuration, formatRelativeTime, windo
 import { TESTNET_EXPLORER_ACCOUNT, TESTNET_EXPLORER_TX } from "../../../lib/config";
 import { ChallengeWindowCountdown } from "../../../components/challenge-window-countdown";
 import { OpenChallengeButton } from "../../../components/open-challenge-button";
+import { AttestationCheck } from "../../../components/attestation-check";
 
 const loadSubmissionDetail = cache((id: string) =>
   backendGetOrNull<SubmissionDetail>(`/v1/submissions/${id}`)
@@ -377,6 +378,10 @@ export default async function SubmissionDetailPage({
             <pre className="max-h-64 overflow-auto rounded-lg border border-border-subtle bg-surface p-3 font-mono text-xs leading-relaxed text-text-secondary">
               {JSON.stringify(attestation.value.payload, null, 2)}
             </pre>
+            <AttestationCheck
+              attestation={attestation.value}
+              chainSubmissionId={submission.chain_submission_id}
+            />
           </CardBody>
         </Card>
       )}
