@@ -132,7 +132,7 @@ For contract changes also run `cargo fmt` and `cargo clippy` inside
   `contracts/escrow-gate/src/test/proptest_model.rs` is a property-based model
   of the consensus outcome. A contract change needs a test, and a change to
   verdict, bond or slashing logic needs to keep the invariants listed in
-  [PRD §8](prd-01-zkml-agent-truth.md) holding. Run `cargo test` in
+  [PRD §8](docs/PRD.md) holding. Run `cargo test` in
   `contracts/` (or `pnpm test:contracts`).
 - **End to end.** `pnpm smoke` (with `pnpm dev` running in another terminal)
   drives honest and dishonest work, challenges, and a wrong-voting

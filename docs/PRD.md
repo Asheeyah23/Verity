@@ -1,4 +1,4 @@
-# PRD — Verity (Agent-Truth Verification Layer for Soroban)
+# Verity product requirements
 
 **What it is:** a phased, honest verification layer that lets a Soroban escrow release funds to
 an AI agent only after the agent's claimed task completion has been checked — first cheaply by
@@ -6,13 +6,29 @@ optimistic replay and statistical spot-check, later by selective zero-knowledge 
 high-value disputes — instead of trusting the agent's self-report or a third party's attestation.
 **Addresses:** frontier 7.1 from the Stellar AI-agent research (the "epistemological problem of
 agent truth" / verifiable inference).
-**Version:** 1.0 · 2026-09-16
-**Status:** Draft for build. Phase 0 (discovery) gates every later phase.
+**Version:** 1.0 · 2026-09-16 (updated 2026-11-22 with code-status table and shipped §8 signatures)
+**Status:** Phase 1 shipped on Stellar testnet (optimistic replay and spot-check verification; no
+ZK proving). Phase 2 (selective ZK proving) remains gated and inactive.
 **Evidence labels:**
 - **VERIFIED:** confirmed by the two deep-research rounds run 2026-09-16 on the Stellar
   AI-agent-economy frontier, with sources in §17.
 - **REASONED:** follows from verified facts, not checked directly.
 - **ASSUMPTION:** a guess to test in Phase 0.
+
+## Status against the code (as of 2026-11-22)
+
+This document was drafted on 2026-09-16 before implementation. Where the shipped Phase 1 codebase
+differs from the original PRD text, the table below is authoritative:
+
+| PRD section | Original PRD statement | What ships today | Where |
+|---|---|---|---|
+| §3 Goal 1 | `verify()` call returning a "confidence-scored verdict" | `EscrowGate::finalize()` returns a discrete `Verdict` enum paired with a `ResolutionMethod` (`None`, `ReexecutionConsensus`, `WindowElapsed`); no confidence score exists in the contract or API. | [`contracts/common/src/types.rs:16-48`](../contracts/common/src/types.rs#L16-L48), [`contracts/escrow-gate/src/lib.rs:673`](../contracts/escrow-gate/src/lib.rs#L673), [README ("How a submission is verified")](../README.md#how-a-submission-is-verified) |
+| §5 Phase 1 | `EscrowGate` "Returns `Pending`, `Verified`, or `Disputed`" | Five `Verdict` variants: `Pending`, `Verified`, `Disputed`, `Slashed`, and `ExpiredUnverified` (used when a challenge or contested window expires without quorum). | [`contracts/common/src/types.rs:16-22`](../contracts/common/src/types.rs#L16-L22), [README ("How a submission is verified")](../README.md#how-a-submission-is-verified) |
+| §5 Phase 1 | A random 10–20% subset of retrieval submissions is spot-checked, and a mismatch "slashes the agent's bond" | Every retrieval submission gets one sampled re-executor spot-check. A match lets the submission verify by default when its window closes; a mismatch escalates that submission (and the agent's other pending submissions) to a full replay quorum, which decides slashing. | [`backend/src/modules/reexecutors/assignment.ts:108-154`](../backend/src/modules/reexecutors/assignment.ts#L108-L154), [`backend/src/workers/indexer.ts:237-250`](../backend/src/workers/indexer.ts#L237-L250), [README ("How a submission is verified")](../README.md#how-a-submission-is-verified) |
+| §8 Contract interfaces | Originally sketched `slash(e, admin_or_keeper, reexecutor, submission_id, amount: i128)` and omitted `escrow_value` from `submit` | `slash(e, reexecutor, submission_id) -> Result<i128, Error>` is permissionless with the slash share fixed on-chain (`cfg_reexecutor_slash_bps`, snapshotted at `submit()` time) and also enforced by `release_attestation_lock()`; `submit()` takes `escrow_value: i128` for proportional bonds. §8 below has been updated to match the shipped contract. | [`contracts/escrow-gate/src/lib.rs:295-304`](../contracts/escrow-gate/src/lib.rs#L295-L304), [`contracts/escrow-gate/src/lib.rs:726-750`](../contracts/escrow-gate/src/lib.rs#L726-L750), [`deployments/interfaces/escrow_gate.json`](../deployments/interfaces/escrow_gate.json), [README ("How a submission is verified")](../README.md#how-a-submission-is-verified) |
+| §9 API (v1) | Lists a `zk_proof.verified` webhook event | Backend accepts and dispatches only `submission.verified`, `submission.slashed`, and `submission.disputed` (other names return HTTP 400); `expired_unverified` emits no webhook and Phase 1 has no ZK proofs. | [`backend/src/modules/marketplaces/routes.ts:10`](../backend/src/modules/marketplaces/routes.ts#L10), [README ("Webhooks")](../README.md#webhooks) |
+| §10 Security | "Stake-weighted selection" for Re-executors | Off-chain assignment is deterministic and uniform (`sha256(seed \| account)`) over online eligible workers, not stake-weighted (on-chain vote tallies in `EscrowGate` are stake-weighted). Testnet deployments also run with `reexecutor_allowlist` enabled because testnet stake is free. | [`backend/src/modules/reexecutors/assignment.ts:18-45`](../backend/src/modules/reexecutors/assignment.ts#L18-L45), [README ("Known limits")](../README.md#known-limits) |
+| §5 Phase 3 (and §4) | Cited `prd-04-multiagent-coalitions.md` (and `prd-05`) | Neither external research-series draft exists in this repository; both references are footnoted below. | §4 and §5 Phase 3 below |
 
 ---
 
@@ -37,6 +53,8 @@ boards, x402-settled task platforms) plug into, not a marketplace itself.
 ---
 
 ## 2. Problem and evidence
+
+> *Research snapshot: this section reflects the 2026-09-16 research date and is preserved as written.*
 
 ### 2.1 Pain statements
 
@@ -143,7 +161,7 @@ boards, x402-settled task platforms) plug into, not a marketplace itself.
 | **Agent marketplace / bounty platform** (Hive-class, XLMx402earn-class) | "Don't let my escrow pay out for garbage work, without building my own verification stack" | Nothing, or a manual dispute process | Per-verification fee or bps on escrow value |
 | **Bounty poster** | "Know my money only moves if the work is real" | Trusts the platform's own (usually absent) checks | Included in platform fee, or a premium "verified" tier |
 | **Agent operator (honest)** | "Prove I did the work, get paid faster, build a reputation that survives disputes" | Nothing beyond self-report or an 8004 attestation from a party who has to trust them anyway | Free to use; benefits from faster payout and 8004-attestation credibility |
-| **Insurer / underwriter (future, ties to frontier 7.5)** | "See a track record of independently verified task completions before extending credit to an agent" | Nothing — Blend and similar have no reputation term at all (VERIFIED, cross-reference `prd-05` underwriting-manifest-style work) | Data licence on verification outcomes |
+| **Insurer / underwriter (future, ties to frontier 7.5)** | "See a track record of independently verified task completions before extending credit to an agent" | Nothing — Blend and similar have no reputation term at all (VERIFIED, cross-reference frontier 7.5 underwriting-manifest-style work[^ext-prds]) | Data licence on verification outcomes |
 | **Stellar 8004 ecosystem** | "A credible, non-circular attestation source to reference in the Validation Registry" | Attestors today are ad hoc and centralized | Free integration; distribution value, not direct revenue |
 
 ---
@@ -237,7 +255,7 @@ with proof cost and latency within the gate's bounds.
 - Formal integration as a recognized attestor type in Stellar 8004's Validation Registry (subject
   to 8004's own governance, which is out of Verity's control — ASSUMPTION this is achievable).
 - Explore multi-agent task verification (a task completed by a coalition, cross-reference frontier
-  7.4 / `prd-04-multiagent-coalitions.md`) once that primitive exists elsewhere.
+  7.4[^ext-prds]) once that primitive exists elsewhere.
 
 ---
 
@@ -358,22 +376,64 @@ slashing_event (
 
 ---
 
-## 8. Contract interfaces (v1 sketch, Rust / soroban-sdk)
+## 8. Contract interfaces (shipped Phase 1, Rust / soroban-sdk)
+
+> *Updated against the shipped contracts in [`contracts/escrow-gate/src/lib.rs`](../contracts/escrow-gate/src/lib.rs) and [`contracts/zk-verifier-registry/src/lib.rs`](../contracts/zk-verifier-registry/src/lib.rs); full exported ABIs live in [`deployments/interfaces/escrow_gate.json`](../deployments/interfaces/escrow_gate.json) and [`deployments/interfaces/zk_verifier_registry.json`](../deployments/interfaces/zk_verifier_registry.json). The original 2026-09-16 draft sketched `slash(e, admin_or_keeper, reexecutor, submission_id, amount)` and omitted `escrow_value` from `submit`; the shipped contract makes `slash` permissionless with an on-chain fixed rate (enforcing invariant 2) and passes `escrow_value` to `submit` (enforcing invariant 5).*
 
 ```rust
-// EscrowGate
-fn submit(e: Env, agent: Address, escrow_ref: BytesN<32>, task_type: TaskType,
-          input_hash: BytesN<32>, output_hash: BytesN<32>, bond: i128) -> u64;
-fn attest_replay(e: Env, reexecutor: Address, submission_id: u64,
-                  output_hash: BytesN<32>, matched: bool);
-fn open_challenge(e: Env, challenger: Address, submission_id: u64, bond: i128);
-fn resolve_challenge(e: Env, submission_id: u64, method: ResolutionMethod) -> Verdict;
-fn finalize(e: Env, submission_id: u64) -> Verdict; // called by marketplace before release
-fn slash(e: Env, admin_or_keeper: Address, reexecutor: Address, submission_id: u64, amount: i128);
+// EscrowGate (contracts/escrow-gate/src/lib.rs)
+pub fn submit(
+    e: Env,
+    agent: Address,
+    escrow_ref: BytesN<32>,
+    escrow_value: i128,
+    task_type: TaskType,
+    input_hash: BytesN<32>,
+    output_hash: BytesN<32>,
+    bond: i128,
+) -> Result<u64, Error>;
+pub fn register_reexecutor(e: Env, reexecutor: Address, stake_amount: i128) -> Result<(), Error>;
+pub fn withdraw_stake(e: Env, reexecutor: Address, amount: i128) -> Result<(), Error>;
+pub fn attest_replay(
+    e: Env,
+    reexecutor: Address,
+    submission_id: u64,
+    output_hash: BytesN<32>,
+    matched: bool,
+) -> Result<(), Error>;
+pub fn release_attestation_lock(
+    e: Env,
+    submission_id: u64,
+    reexecutor: Address,
+) -> Result<(), Error>;
+pub fn open_challenge(
+    e: Env,
+    challenger: Address,
+    submission_id: u64,
+    bond: i128,
+) -> Result<(), Error>;
+pub fn resolve_challenge(
+    e: Env,
+    submission_id: u64,
+    method: ResolutionMethod,
+) -> Result<Verdict, Error>;
+pub fn finalize(e: Env, submission_id: u64) -> Result<Verdict, Error>; // called by marketplace before release
+pub fn slash(e: Env, reexecutor: Address, submission_id: u64) -> Result<i128, Error>;
 
-// ZKVerifierRegistry (Phase 2)
-fn register_verifier(e: Env, admin: Address, proof_system: Symbol, verifier_contract: Address);
-fn verify_proof(e: Env, proof_system: Symbol, submission_id: u64, proof: Bytes) -> bool;
+// ZkVerifierRegistry (contracts/zk-verifier-registry/src/lib.rs — deployed empty as Phase 2 anchor)
+pub fn register_verifier(
+    e: Env,
+    admin: Address,
+    proof_system: Symbol,
+    verifier_contract: Address,
+) -> Result<(), Error>;
+pub fn deregister_verifier(e: Env, admin: Address, proof_system: Symbol) -> Result<(), Error>;
+pub fn verify_proof(
+    e: Env,
+    proof_system: Symbol,
+    submission_id: u64,
+    proof: Bytes,
+) -> Result<bool, Error>;
 ```
 
 ### Invariants (property tests and audit targets)
@@ -531,6 +591,8 @@ month (USD).
 
 ## 17. Verified technical facts this PRD depends on
 
+> *Research snapshot: these facts and sources reflect the 2026-09-16 research date and are preserved as written.*
+
 | Fact | Status | Source |
 |---|---|---|
 | ZKML-Soroban: pipeline steps 1–3 and 5 implemented; Groth16 compression (step 4) and ONNX CLI ingestion pending; no production on-chain proof verified yet | VERIFIED | github.com/ZKML-Soroban/ZKML-Soroban (README/status table) |
@@ -546,3 +608,5 @@ month (USD).
 | `sap-lyart.vercel.app` "Multi-Agent ZK Consensus" claim was checked and refuted (0-3 adversarial vote); no evidence of a working system | VERIFIED | sap-lyart.vercel.app (claim), adversarial verification round, 2026-09-16 |
 | Stellar Agents hackathon: large builder ecosystem (260+ projects reported) around x402/MPP/Stripe-style agent payment and coordination tooling | VERIFIED | dorahacks.io/hackathon/stellar-agents-x402-stripe-mpp/detail |
 | SCF #37 "AI Agent Toolkit: Soroban to MCP" awarded $108.0K, in Build phase | VERIFIED | communityfund.stellar.org/project/stellar-ai-agent-kit-mr6 |
+
+[^ext-prds]: Cross-references from the 2026-09-16 Stellar AI-agent research series (frontier 7.4 multi-agent coalitions and frontier 7.5 underwriting manifests). Those separate research drafts are not part of this repository.

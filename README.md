@@ -10,7 +10,7 @@ and replay-checked*. It is not cryptographic proof of model correctness.
 `EscrowGate` accepts no ZK proofs: its challenge resolution rejects the ZK
 method outright, so no code path can report a ZK-verified result. The
 `ZKVerifierRegistry` contract is deployed empty as the anchor for Phase 2. See
-[`prd-01-zkml-agent-truth.md`](prd-01-zkml-agent-truth.md) for the full scope.
+[`docs/PRD.md`](docs/PRD.md) for the full scope.
 
 ## How a submission is verified
 

@@ -1,7 +1,7 @@
 # Architecture
 
 A map of the code for contributors. The README says what Verity does and what
-it does not prove; [`prd-01-zkml-agent-truth.md`](../prd-01-zkml-agent-truth.md)
+it does not prove; [`docs/PRD.md`](PRD.md)
 is the product document. This file says where each responsibility lives and
 which rules you must not break when you touch it.
 
