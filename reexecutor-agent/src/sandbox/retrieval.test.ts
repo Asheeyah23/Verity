@@ -237,6 +237,17 @@ describe("isPrivateAddress", () => {
     "::ffff:a9fe:a9fe",
     "64:ff9b::a9fe:a9fe",
     "2002:7f00:1::",
+    // Non-global IANA IPv6 special-purpose blocks
+    "64:ff9b:1::a9fe:a9fe",
+    "64:ff9b:1::808:808",
+    "::ffff:0:7f00:1",
+    "::ffff:0:127.0.0.1",
+    "::ffff:0:808:808",
+    "2001:0:4136:e378::1",
+    "2001:2::1",
+    "2001:10::1",
+    "3fff::1",
+    "5f00::1",
     "not-an-ip",
   ];
 
@@ -258,6 +269,11 @@ describe("isPrivateAddress", () => {
     "169.253.1.1",
     "2001:4860:4860::8888",
     "2606:4700::1111",
+    "2606:4700:4700::1111",
+    "2001:2:1::1",
+    "2001:20::1",
+    "3fff:1000::1",
+    "5f01::1",
     "198.20.0.0",
     "::ffff:808:808",
     "64:ff9b::808:808",
@@ -296,6 +312,8 @@ describe("resolvePublicTarget", () => {
       { raw: "http://0x7f.0.0.1/", host: "127.0.0.1" },
       { raw: "http://2130706433/", host: "127.0.0.1" },
       { raw: "http://10.1.2.3/", host: "10.1.2.3" },
+      { raw: "http://[64:ff9b:1::a9fe:a9fe]/", host: "64:ff9b:1::a9fe:a9fe" },
+      { raw: "http://[::ffff:0:7f00:1]/", host: "::ffff:0:7f00:1" },
     ];
 
     for (const { raw, host } of blocked) {

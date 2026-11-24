@@ -65,6 +65,25 @@ const IP_TEST_CASES: Array<[string, boolean]> = [
   ["2002:7f00:1::", true],
   ["2002:808:808::", false],
   ["::8.8.8.8", true],
+  // Non-global IANA IPv6 special-purpose blocks and their boundaries
+  ["64:ff9b:1::a9fe:a9fe", true],
+  ["64:ff9b:1::808:808", true],
+  ["::ffff:0:7f00:1", true],
+  ["::ffff:0:127.0.0.1", true],
+  ["::ffff:0:808:808", true],
+  ["2001:0:4136:e378::1", true],
+  ["2001:2::1", true],
+  ["2001:2:1::1", false],
+  ["2001:10::1", true],
+  ["2001:1f:ffff::1", true],
+  ["2001:20::1", false],
+  ["3fff::1", true],
+  ["3fff:0fff:ffff::1", true],
+  ["3fff:1000::1", false],
+  ["5f00::1", true],
+  ["5f00:ffff::1", true],
+  ["5f01::1", false],
+  ["2606:4700:4700::1111", false],
   // Malformed input is never public
   ["not-an-ip", true],
   ["1:2:3:4:5:6:7:8:9", true],
@@ -145,7 +164,13 @@ test("resolvePublicTarget returns the checked address for the request to connect
 });
 
 test("resolvePublicTarget rejects IPv4 hidden in IPv6 literals", async () => {
-  for (const url of ["http://[::ffff:7f00:1]/", "http://[::ffff:169.254.169.254]/", "http://[64:ff9b::a9fe:a9fe]/"]) {
+  for (const url of [
+    "http://[::ffff:7f00:1]/",
+    "http://[::ffff:169.254.169.254]/",
+    "http://[::ffff:0:7f00:1]/",
+    "http://[64:ff9b::a9fe:a9fe]/",
+    "http://[64:ff9b:1::a9fe:a9fe]/",
+  ]) {
     await assert.rejects(
       () => resolvePublicTarget(url),
       (err: unknown) => err instanceof HttpError && err.statusCode === 400 && /non-public/.test(err.message),

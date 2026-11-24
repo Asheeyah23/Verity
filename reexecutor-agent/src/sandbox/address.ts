@@ -26,11 +26,23 @@ for (const [net, prefix] of [
 ] as const) {
   NON_PUBLIC.addSubnet(net, prefix, "ipv4");
 }
+// Non-global IPv6 blocks from the IANA IPv6 Special-Purpose Address Registry
+// (https://www.iana.org/assignments/iana-ipv6-special-registry/): every entry
+// marked Globally Reachable = False (plus Teredo, marked N/A, and deprecated
+// site-local / multicast). 64:ff9b:1::/48 is rejected outright because the
+// position of the embedded IPv4 address depends on the operator's prefix.
 for (const [net, prefix] of [
   ["::", 128], // unspecified
   ["::1", 128], // loopback
+  ["::ffff:0:0:0", 96], // IPv4-translated (RFC 6145)
+  ["64:ff9b:1::", 48], // local-use NAT64 (RFC 8215)
   ["100::", 64], // discard-only
+  ["2001::", 32], // Teredo (RFC 4380)
+  ["2001:2::", 48], // benchmarking (RFC 5180)
+  ["2001:10::", 28], // deprecated ORCHID (RFC 4843)
   ["2001:db8::", 32], // documentation
+  ["3fff::", 20], // documentation (RFC 9637)
+  ["5f00::", 16], // SRv6 SIDs (RFC 9602)
   ["fc00::", 7], // unique local
   ["fe80::", 10], // link-local
   ["fec0::", 10], // deprecated site-local
