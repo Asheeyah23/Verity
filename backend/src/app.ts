@@ -139,6 +139,13 @@ export async function buildApp() {
     if (contractError) {
       return reply.code(422).send({ error: `EscrowGate rejected the transaction: ${contractError}`, contract_error: contractError });
     }
+    const msg = err instanceof Error ? err.message : String(err);
+    const accountNotFound = /Account not found:\s*(G[A-Z0-9]{55})/.exec(msg);
+    if (accountNotFound) {
+      return reply.code(400).send({
+        error: `account ${accountNotFound[1]} does not exist on this network; fund it first`,
+      });
+    }
     const statusCode = (err as { statusCode?: number }).statusCode;
     if (statusCode && statusCode < 500) {
       return reply.code(statusCode).send({ error: err instanceof Error ? err.message : String(err) });

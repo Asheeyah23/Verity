@@ -5,7 +5,7 @@ import { db } from "../../db.js";
 import { escrowGateFor } from "../../chain/clients.js";
 import { minChallengerBond, readSubmission } from "../../chain/actions.js";
 import { env } from "../../config/env.js";
-import { parseGateCall, relaySignedXdr, server } from "../../chain/rpc.js";
+import { assertSimulated, buildWithAccountCheck, parseGateCall, relaySignedXdr, server } from "../../chain/rpc.js";
 import { bufFromHex, sha256Bytes, toChainTaskType } from "../../chain/mappers.js";
 import { canonicalJson } from "../../chain/canonical.js";
 import { HttpError } from "../../http-error.js";
@@ -128,19 +128,22 @@ export async function submissionsRoutes(app: FastifyInstance) {
     await requireArtifact("function_ref", body.function_ref, body.function_hash);
     await requireArtifact("claimed_output_ref", body.claimed_output_ref, body.claimed_output_hash);
 
-    // Build (and simulate) first: a submission the contract would reject —
-    // bond too low, insufficient balance — fails here with the contract's own
-    // error and never leaves an orphan row behind.
+    // Build and simulate: assertSimulated checks that simulation succeeded
+    // so a submission the contract would reject (bond too low, etc.)
+    // fails before creating a draft row.
     const client = escrowGateFor(agent);
-    const assembled = await client.submit({
-      agent,
-      escrow_ref: sha256Bytes(body.escrow_ref),
-      escrow_value: BigInt(body.escrow_value),
-      task_type: toChainTaskType(body.task_type),
-      input_hash: bufFromHex(body.input_hash),
-      output_hash: bufFromHex(body.claimed_output_hash),
-      bond: BigInt(body.bond_amount),
-    });
+    const assembled = await buildWithAccountCheck(() =>
+      client.submit({
+        agent,
+        escrow_ref: sha256Bytes(body.escrow_ref),
+        escrow_value: BigInt(body.escrow_value),
+        task_type: toChainTaskType(body.task_type),
+        input_hash: bufFromHex(body.input_hash),
+        output_hash: bufFromHex(body.claimed_output_hash),
+        bond: BigInt(body.bond_amount),
+      })
+    );
+    assertSimulated(assembled);
     const unsignedXdr = assembled.toXDR();
     const values = {
       escrow_ref: body.escrow_ref,

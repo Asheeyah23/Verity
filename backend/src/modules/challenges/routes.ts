@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../../auth/plugin.js";
 import { db } from "../../db.js";
 import { escrowGateFor } from "../../chain/clients.js";
-import { assertGateCall, relaySignedXdr } from "../../chain/rpc.js";
+import { assertGateCall, assertSimulated, buildWithAccountCheck, relaySignedXdr } from "../../chain/rpc.js";
 
 export async function challengesRoutes(app: FastifyInstance) {
   // Read-only list addition (same rationale as GET /v1/submissions above) so
@@ -74,12 +74,16 @@ export async function challengesRoutes(app: FastifyInstance) {
       return { error: "submission not found or not yet confirmed on-chain" };
     }
 
+    const chainSubmissionId = submission.chain_submission_id;
     const client = escrowGateFor(challenger);
-    const assembled = await client.open_challenge({
-      challenger,
-      submission_id: BigInt(submission.chain_submission_id),
-      bond: BigInt(body.bond),
-    });
+    const assembled = await buildWithAccountCheck(() =>
+      client.open_challenge({
+        challenger,
+        submission_id: BigInt(chainSubmissionId),
+        bond: BigInt(body.bond),
+      })
+    );
+    assertSimulated(assembled);
 
     reply.code(201);
     return { unsigned_transaction_xdr: assembled.toXDR() };
