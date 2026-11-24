@@ -271,11 +271,12 @@ integers except `REPLAY_OVERASSIGN` and `DB_STATEMENT_TIMEOUT_MS`, which also ac
 | `DRAFT_TTL_S` | `3600` | Scheduler deletes drafts with no on-chain submission after this many seconds since `updated_at`; rebuilding a draft transaction restarts its age. Must outlast the built transaction's validity. |
 | `ARTIFACT_MAX_BYTES` | `262144` | Maximum decoded artifact size accepted by `POST /v1/artifacts`; larger artifacts return HTTP 413. |
 | `ARTIFACT_MAX_TOTAL_BYTES` | `10737418240` (10 GiB) | Cap on everything in `ARTIFACT_STORAGE_DIR`. An upload of new content that would pass it returns HTTP 507; content already stored is never refused. Size the volume above this. Artifacts are never deleted, so raise it, or prune unreferenced files, as the store fills. |
-| `ARTIFACT_UPLOADS_PER_MINUTE` | `30` | Uploads per account (or client address) per minute on `POST /v1/artifacts`, on top of `RATE_LIMIT_PER_MINUTE`. |
+| `ARTIFACT_UPLOADS_PER_MINUTE` | `30` | Uploads per minute per account **and** per client address on `POST /v1/artifacts`, on top of the general limits. Rotating tokens does not raise it. |
 | `DB_POOL_MAX` | `10` | Maximum concurrent connections in the Postgres pool. Read by the database package, not `env.ts`. |
 | `DB_STATEMENT_TIMEOUT_MS` | `30000` | Milliseconds before a query is cancelled; `0` disables the timeout. |
 | `ATTESTATION_SIGNING_SECRET` | the keeper key | Stellar secret key that signs verdict attestations. Give it its own key so rotating the fund-moving keeper key does not change every future attestation's signer. |
-| `RATE_LIMIT_PER_MINUTE` | `300` | Requests per minute per account with a valid bearer token, otherwise per client address. `/health*` is exempt; `X-Forwarded-For` supplies the address only with `TRUST_PROXY=true`. |
+| `RATE_LIMIT_PER_MINUTE` | `300` | Requests per minute per client address, and again per account with a valid bearer token. Both apply, so extra accounts do not add address budget. `/health*` is exempt; `X-Forwarded-For` supplies the address only with `TRUST_PROXY=true`. |
+| `AUTH_REQUESTS_PER_MINUTE` | `20` | Requests per minute per client address to `GET /auth` and `POST /auth`, which mint identities. Far below `RATE_LIMIT_PER_MINUTE` so signing in as many accounts is slow. |
 
 Outside Docker, add these settings to `backend/.env`, loaded by `dotenv`,
 and restart the backend. `backend/.env.example` shows commented defaults;

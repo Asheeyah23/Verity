@@ -371,9 +371,24 @@ the relayer produces for a network rejection carries `error` alone.
 
 ### Rate limiting
 
-`RATE_LIMIT_PER_MINUTE` requests per minute (default 300), keyed by the
-authenticated account when a valid bearer token is sent and by client
-address otherwise; `/health*` is exempt.
+Two limits apply to every request, and a request must stay under both:
+
+- `RATE_LIMIT_PER_MINUTE` requests per minute (default 300) per **client
+  address**. Every account a client signs in as draws from that same address
+  budget, so minting identities does not multiply it.
+- `RATE_LIMIT_PER_MINUTE` requests per minute per **authenticated account**,
+  on top of the address budget. Unauthenticated requests, and requests with
+  an invalid token, skip this one.
+
+Sign-in has its own, much lower per-address budget:
+`AUTH_REQUESTS_PER_MINUTE` (default 20) covers `GET /auth` and `POST /auth`
+together. `POST /v1/artifacts` additionally allows only
+`ARTIFACT_UPLOADS_PER_MINUTE` uploads per minute per account **and** per
+client address. `/health*` is exempt.
+
+The client address comes from `X-Forwarded-For` only when `TRUST_PROXY=true`.
+The dashboard's server proxies every visitor, so behind it the backend must
+trust the proxy; otherwise all visitors share one budget.
 
 ### Idempotency of `POST /v1/submissions`
 

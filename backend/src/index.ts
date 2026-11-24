@@ -5,7 +5,7 @@ import { startIndexer } from "./workers/indexer.js";
 import { startScheduler } from "./workers/scheduler.js";
 
 async function main() {
-  const app = buildApp();
+  const app = await buildApp();
   await app.listen({ port: env.PORT, host: "0.0.0.0" });
 
   // The indexer owns the chain cursor and the scheduler signs with the keeper

@@ -6,7 +6,9 @@ import { env } from "../../config/env.js";
 import * as path from "node:path";
 
 export async function artifactsRoutes(app: FastifyInstance) {
-  // Stricter than the global limit: each upload can write up to ARTIFACT_MAX_BYTES to disk.
+  // Stricter than the global limit: each upload can write up to ARTIFACT_MAX_BYTES
+  // to disk. The limit applies per account and per client address, so rotating
+  // tokens while keeping the same address cannot buy more uploads.
   const uploadOptions = {
     preHandler: requireAuth,
     config: { rateLimit: { max: env.ARTIFACT_UPLOADS_PER_MINUTE, timeWindow: "1 minute" } },

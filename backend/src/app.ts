@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -79,28 +80,46 @@ async function check(fn: () => Promise<unknown>): Promise<boolean> {
   }
 }
 
-export function buildApp() {
+/** The account a valid bearer token names, if there is one. Used only to key
+ * the per-account rate limit: routes that need an account still go through
+ * requireAuth, which rejects a bad token rather than ignoring it. An invalid
+ * token names no account, so it consumes only the address budget. */
+function bearerAccount(req: FastifyRequest): string | undefined {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return undefined;
+  try {
+    return verifyJwt(header.slice("Bearer ".length)).sub;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function buildApp() {
   const app = Fastify({ logger: true, trustProxy: env.TRUST_PROXY, bodyLimit: 1_048_576 });
   app.register(cookie);
   app.register(helmet);
-  // One bucket per signed-in account, otherwise per client address — the
-  // dashboard's server reads all arrive from one address, so it forwards the
-  // browser's (see TRUST_PROXY).
-  app.register(rateLimit, {
+  // Two independent limiters, because a request must draw from both budgets
+  // and the plugin runs at most one limiter per request. Registering it twice
+  // gives each registration its own store and its own "already ran" marker.
+  // Awaiting matters: the limiter is installed through onRoute, so it must be
+  // loaded before the routes below are declared.
+
+  // 1. Per client address, always. Every account one client signs in as draws
+  //    from the same address budget, so minting identities cannot multiply it.
+  await app.register(rateLimit, {
     max: env.RATE_LIMIT_PER_MINUTE,
     timeWindow: "1 minute",
     allowList: (req) => isHealthPath(req.url),
-    keyGenerator: (req) => {
-      const header = req.headers.authorization;
-      if (header?.startsWith("Bearer ")) {
-        try {
-          return `account:${verifyJwt(header.slice("Bearer ".length)).sub}`;
-        } catch {
-          // fall through: an invalid token is rate limited by address
-        }
-      }
-      return `ip:${req.ip}`;
-    },
+    keyGenerator: (req) => `ip:${req.ip}`,
+  });
+
+  // 2. Per account, on top of the address budget. Unauthenticated requests
+  //    (and bad tokens) skip it; the address bucket still bounds them.
+  await app.register(rateLimit, {
+    max: env.RATE_LIMIT_PER_MINUTE,
+    timeWindow: "1 minute",
+    allowList: (req) => isHealthPath(req.url) || bearerAccount(req) === undefined,
+    keyGenerator: (req) => `account:${bearerAccount(req)}`,
   });
 
   // Bad input and contract-level rejections are the caller's problem, not a

@@ -64,6 +64,9 @@ const schema = z.object({
   // used for rate limiting comes from X-Forwarded-For.
   TRUST_PROXY: flag("false"),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
+  /** Sign-in requests per client address per minute. Minting an identity costs
+   * a GET and a POST /auth, so this stays far below the general budget. */
+  AUTH_REQUESTS_PER_MINUTE: z.coerce.number().int().positive().default(20),
 
   // A re-executor counts as online if its worker polled for work this recently.
   REEXECUTOR_LIVENESS_S: z.coerce.number().int().positive().default(60),
