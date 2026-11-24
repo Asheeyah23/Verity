@@ -289,12 +289,16 @@ container. Defaults apply unless you also add the desired variables to the
 backend service's `environment` mapping (or a Compose override) and recreate
 the backend container. This repository's Compose file is unchanged here.
 
-The request body limit is fixed at 1,048,576 bytes (1 MiB), including the JSON
-wrapper and base64 content. Base64 uses about four bytes per three decoded
-bytes, so raising `ARTIFACT_MAX_BYTES` above roughly 780,000 bytes cannot
-increase the usable upload size past that body limit; oversized requests are
-rejected before the decoded-artifact check. The body limit is not an
-environment setting.
+Request bodies are limited to 1,048,576 bytes (1 MiB), except on
+`POST /v1/artifacts`. That route takes the artifact as base64 inside JSON, four
+characters for every three bytes, so its limit is computed from
+`ARTIFACT_MAX_BYTES`: the base64 length of that many bytes plus 4,096 bytes for
+the JSON around it. Raising `ARTIFACT_MAX_BYTES` raises the usable upload size
+with it. An artifact a little over the limit is answered with the 413 that
+names the limit; a request far over it is refused while the body is being
+read, with the generic 413. An upload is held in memory while it is handled,
+so choose the value with that in mind. Neither body limit is an environment
+setting of its own.
 
 ## What this deployment does not give you
 

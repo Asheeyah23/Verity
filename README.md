@@ -233,7 +233,8 @@ Deterministic tasks run in a sandboxed JavaScript runtime:
    - Returning a `BigInt` throws an error and counts as a mismatch.
    - Async functions returning a `Promise` serialize to `{}`. Write synchronous code.
 8. **Artifact upload limits.** Each artifact (function, input, claimed output) may be
-   at most 262144 bytes (`ARTIFACT_MAX_BYTES`). The API request body limit is 1 MiB.
+   at most 262144 bytes (`ARTIFACT_MAX_BYTES`). The upload's request body limit follows
+   that setting (its base64 length plus 4096 bytes); other request bodies cap at 1 MiB.
    Each account may upload 30 artifacts per minute (`ARTIFACT_UPLOADS_PER_MINUTE`),
    and the store holds at most 10 GiB (`ARTIFACT_MAX_TOTAL_BYTES`); uploading new
    content past that returns HTTP 507. Content already stored never counts again.
@@ -374,7 +375,7 @@ Every error body is `{ "error": "<message>" }`, with one addition:
 | 400 | request validation | `{ "error": "<path>: <message>; …" }` (one entry per invalid field) |
 | 400/403/404 | hand-written route checks | `{ "error": … }` — e.g. 404 `{ "error": "not found" }`, 403 `{ "error": "forbidden" }` on the ownership checks above |
 | 400/403/422/502/503/504 | relay checks | `{ "error": … }` |
-| 413 | artifact over `ARTIFACT_MAX_BYTES` (default 262144; request bodies cap at 1 MiB) | `{ "error": … }` |
+| 413 | artifact over `ARTIFACT_MAX_BYTES` (default 262144), or a request body over its limit: 1 MiB, and for `POST /v1/artifacts` the base64 length of `ARTIFACT_MAX_BYTES` plus 4096 bytes | `{ "error": … }` |
 | 507 | artifact store is full (`ARTIFACT_MAX_TOTAL_BYTES`) | `{ "error": … }` |
 | 422 | the contract rejected the transaction | `{ "error": "EscrowGate rejected the transaction: <ErrorName>", "contract_error": "<ErrorName>" }` |
 | 500 | anything unexpected | `{ "error": "internal error" }` |

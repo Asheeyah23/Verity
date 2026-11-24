@@ -95,6 +95,8 @@ function bearerAccount(req: FastifyRequest): string | undefined {
 }
 
 export async function buildApp() {
+  // 1 MiB for every request body except POST /v1/artifacts, which sizes its own
+  // from ARTIFACT_MAX_BYTES (modules/artifacts/routes.ts).
   const app = Fastify({ logger: true, trustProxy: env.TRUST_PROXY, bodyLimit: 1_048_576 });
   app.register(cookie);
   app.register(helmet);

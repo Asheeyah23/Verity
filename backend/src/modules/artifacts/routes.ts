@@ -5,12 +5,27 @@ import { storeArtifact, readArtifact, StorageFullError } from "./storage.js";
 import { env } from "../../config/env.js";
 import * as path from "node:path";
 
+/**
+ * Request body limit for `POST /v1/artifacts`, from the largest artifact it
+ * accepts. The artifact travels as base64, four characters for every three
+ * bytes, and the other 4096 bytes are room for the JSON around it and a
+ * `content_type`.
+ */
+export function artifactBodyLimit(maxBytes: number): number {
+  return Math.ceil(maxBytes / 3) * 4 + 4096;
+}
+
 export async function artifactsRoutes(app: FastifyInstance) {
   // Stricter than the global limit: each upload can write up to ARTIFACT_MAX_BYTES
   // to disk. The limit applies per account and per client address, so rotating
   // tokens while keeping the same address cannot buy more uploads.
+  //
+  // The body limit follows ARTIFACT_MAX_BYTES and not the app-wide 1 MiB. Under that one,
+  // base64 capped an artifact at about 786 KB whatever the setting said, and a larger one
+  // was refused before the check below could name the real limit.
   const uploadOptions = {
     preHandler: requireAuth,
+    bodyLimit: artifactBodyLimit(env.ARTIFACT_MAX_BYTES),
     config: { rateLimit: { max: env.ARTIFACT_UPLOADS_PER_MINUTE, timeWindow: "1 minute" } },
   };
 
@@ -18,7 +33,7 @@ export async function artifactsRoutes(app: FastifyInstance) {
     const body = z
       .object({
         content_base64: z.string().min(1),
-        content_type: z.string().optional(),
+        content_type: z.string().max(255).optional(),
       })
       .parse(req.body);
 
