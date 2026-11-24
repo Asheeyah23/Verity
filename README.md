@@ -346,6 +346,7 @@ call it was built for.
 | `POST /v1/marketplaces/:id/webhooks` | Bearer | 400 for an unknown event name; 403 for another account's marketplace |
 | `GET /v1/marketplaces/:id/webhooks` | Bearer | your subscriptions, without `secret`; 403 for another account's marketplace |
 | `PATCH /v1/marketplaces/:id/webhooks/:webhookId` | Bearer | `{"active": boolean}`; 403 for another account's marketplace, 404 for an unknown webhook |
+| `DELETE /v1/marketplaces/:id/webhooks/:webhookId` | Bearer | removes subscription and its delivery history, freeing a slot; 204 on success, 403 for another account's marketplace, 404 for an unknown webhook |
 
 ### Authentication and token lifetime
 
@@ -451,18 +452,21 @@ with HTTP 400 and duplicates are stored once. The marketplace ID is a UUID;
 only its own account may register a webhook (otherwise HTTP 403). A
 successful registration returns the subscription row with HTTP 201. A
 marketplace can hold at most 10 subscriptions (HTTP 409 beyond that);
-deactivating one does not free its slot. The URL must resolve to a public
-address: private, loopback, link-local, multicast and reserved ranges (and IPv6
-forms that wrap them) are refused with HTTP 400, both at registration and again
-at every delivery, which connects to the address it just checked.
+delete an existing subscription to free a slot (deactivating one does not).
+The URL must resolve to a public address: private, loopback, link-local,
+multicast and reserved ranges (and IPv6 forms that wrap them) are refused
+with HTTP 400, both at registration and again at every delivery, which
+connects to the address it just checked.
 
 `GET /v1/marketplaces/:id/webhooks` lists the marketplace's subscriptions
 (`id`, `url`, `events`, `active`, `created_at`; the `secret` is never
 returned). `PATCH /v1/marketplaces/:id/webhooks/:webhookId` with
 `{"active": false}` stops deliveries to a subscription and `{"active": true}`
 resumes them; it returns the updated subscription, or HTTP 404 if that
-webhook does not exist on this marketplace. Both require the marketplace's own
-account (otherwise HTTP 403).
+webhook does not exist on this marketplace. `DELETE /v1/marketplaces/:id/webhooks/:webhookId`
+permanently removes a subscription, cascades and deletes its delivery history,
+and frees its slot (returning HTTP 204, or HTTP 404 if not found). All require
+the marketplace's own account (otherwise HTTP 403).
 
 | Event | When emitted | `data` |
 | --- | --- | --- |
