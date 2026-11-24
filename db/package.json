@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "kysely": "^0.29.7",
+    "kysely": "^0.29.8",
     "pg": "^8.23.1",
     "embedded-postgres": "18.4.0-beta.17"
   },
