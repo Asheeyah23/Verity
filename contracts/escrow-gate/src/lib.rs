@@ -727,6 +727,11 @@ impl EscrowGate {
         if storage::is_slashed(&e, submission_id, &reexecutor) {
             return Err(Error::AlreadySlashed);
         }
+        // Once the attestation lock has been released the vote is settled;
+        // stake deposited afterwards must never be taken for an older vote.
+        if storage::is_released(&e, submission_id, &reexecutor) {
+            return Err(Error::AttestationAlreadyReleased);
+        }
         let sub = storage::get_submission(&e, submission_id).ok_or(Error::SubmissionNotFound)?;
         if !sub.finalized {
             return Err(Error::SubmissionNotFinalized);

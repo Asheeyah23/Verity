@@ -387,6 +387,124 @@ fn releasing_the_lock_slashes_a_wrong_voter_first() {
 }
 
 #[test]
+fn slash_cannot_take_stake_deposited_after_lock_release() {
+    let e = Env::default();
+    let w = setup_with(&e, ConfigRecord { reexecutor_slash_bps: 10_000, ..default_config() });
+    let agent = Address::generate(&e);
+    let sub_a = submit_default(&w, &agent);
+    let sub_b = submit_default(&w, &agent);
+
+    let wrong = Address::generate(&e);
+    let right1 = Address::generate(&e);
+    let right2 = Address::generate(&e);
+    for r in [&wrong, &right1, &right2] {
+        register_rex(&w, r);
+    }
+
+    let claimed = BytesN::from_array(&e, &[3u8; 32]);
+    let mismatch = BytesN::from_array(&e, &[9u8; 32]);
+    for id in [sub_a, sub_b] {
+        w.client.attest_replay(&wrong, &id, &claimed, &true);
+        w.client.attest_replay(&right1, &id, &mismatch, &false);
+        w.client.attest_replay(&right2, &id, &mismatch, &false);
+        assert_eq!(w.client.finalize(&id), Verdict::Slashed);
+    }
+
+    // Releasing A takes all 600 XLM of wrong's stake (100% slash).
+    w.client.release_attestation_lock(&sub_a, &wrong);
+    let info = w.client.reexecutor_info(&wrong).unwrap();
+    assert_eq!(info.stake_amount, 0);
+    assert!(!info.active);
+    assert_eq!(info.open_attestations, 1);
+
+    // Releasing B finds 0 stake left, settles nothing further, and drops open_attestations to 0.
+    w.client.release_attestation_lock(&sub_b, &wrong);
+    let info = w.client.reexecutor_info(&wrong).unwrap();
+    assert_eq!(info.stake_amount, 0);
+    assert_eq!(info.open_attestations, 0);
+
+    // Re-executor deposits fresh stake after all prior locks were released.
+    w.client.register_reexecutor(&wrong, &(600 * XLM));
+    let admin_before = w.token.balance(&w.admin);
+    let contract_before = w.token.balance(&w.client.address);
+    let wrong_bal_before = w.token.balance(&wrong);
+
+    // Calling slash() for the already-released vote B must fail and leave the new stake untouched.
+    assert_eq!(
+        w.client.try_slash(&wrong, &sub_b),
+        Err(Ok(Error::AttestationAlreadyReleased))
+    );
+    let info = w.client.reexecutor_info(&wrong).unwrap();
+    assert_eq!(info.stake_amount, 600 * XLM);
+    assert!(info.active);
+    assert_eq!(w.token.balance(&w.admin), admin_before);
+    assert_eq!(w.token.balance(&w.client.address), contract_before);
+    assert_eq!(w.token.balance(&wrong), wrong_bal_before);
+}
+
+#[test]
+fn slash_after_normal_release_is_rejected_and_moves_no_tokens() {
+    // Normal release on a right-side voter.
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+
+    let wrong = Address::generate(&e);
+    let right1 = Address::generate(&e);
+    let right2 = Address::generate(&e);
+    for r in [&wrong, &right1, &right2] {
+        register_rex(&w, r);
+    }
+    w.client.attest_replay(&wrong, &id, &BytesN::from_array(&e, &[3u8; 32]), &true);
+    w.client.attest_replay(&right1, &id, &BytesN::from_array(&e, &[9u8; 32]), &false);
+    w.client.attest_replay(&right2, &id, &BytesN::from_array(&e, &[9u8; 32]), &false);
+    assert_eq!(w.client.finalize(&id), Verdict::Slashed);
+
+    w.client.release_attestation_lock(&id, &right1);
+    let admin_before = w.token.balance(&w.admin);
+    let contract_before = w.token.balance(&w.client.address);
+    let right1_bal_before = w.token.balance(&right1);
+
+    assert_eq!(
+        w.client.try_slash(&right1, &id),
+        Err(Ok(Error::AttestationAlreadyReleased))
+    );
+    assert_eq!(w.client.reexecutor_info(&right1).unwrap().stake_amount, 600 * XLM);
+    assert_eq!(w.token.balance(&w.admin), admin_before);
+    assert_eq!(w.token.balance(&w.client.address), contract_before);
+    assert_eq!(w.token.balance(&right1), right1_bal_before);
+
+    // Normal release on a wrong-side voter when slashing is disabled (0 bps).
+    let e = Env::default();
+    let w = setup_with(&e, ConfigRecord { reexecutor_slash_bps: 0, ..default_config() });
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+
+    let wrong = Address::generate(&e);
+    register_rex(&w, &wrong);
+    w.client.attest_replay(&wrong, &id, &BytesN::from_array(&e, &[3u8; 32]), &true);
+    for _ in 0..2 {
+        let r = Address::generate(&e);
+        register_rex(&w, &r);
+        w.client.attest_replay(&r, &id, &BytesN::from_array(&e, &[9u8; 32]), &false);
+    }
+    assert_eq!(w.client.finalize(&id), Verdict::Slashed);
+
+    w.client.release_attestation_lock(&id, &wrong);
+    let admin_before = w.token.balance(&w.admin);
+    let contract_before = w.token.balance(&w.client.address);
+
+    assert_eq!(
+        w.client.try_slash(&wrong, &id),
+        Err(Ok(Error::AttestationAlreadyReleased))
+    );
+    assert_eq!(w.client.reexecutor_info(&wrong).unwrap().stake_amount, 600 * XLM);
+    assert_eq!(w.token.balance(&w.admin), admin_before);
+    assert_eq!(w.token.balance(&w.client.address), contract_before);
+}
+
+#[test]
 fn reexecutor_slash_pays_only_a_challenger_who_won() {
     // Upheld challenge: the prevailing challenger shares in the stake of a
     // re-executor who backed the bad submission.
