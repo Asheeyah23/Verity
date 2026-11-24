@@ -2121,6 +2121,151 @@ fn open_challenge_stays_closed_one_second_after_the_deadline() {
     assert_eq!(open_challenge_after(3601), Err(Error::ChallengeWindowClosed));
 }
 
+/// Submits the default 1,000 XLM Deterministic work (small tier: a 3,600 s
+/// window), optionally opens a challenge one second before the window closes,
+/// then moves the clock `offset` seconds past the submit time and has a staked
+/// re-executor vote.
+fn attest_replay_after(offset: u64, challenged: bool, matched: bool) -> Result<(), Error> {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    // Not zero, so a deadline counted from the epoch and not from the
+    // submission would show.
+    e.ledger().set_timestamp(1_000_000);
+    let start = e.ledger().timestamp();
+    let id = submit_default(&w, &agent);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+
+    if challenged {
+        let challenger = Address::generate(&e);
+        fund(&w, &challenger, 50 * XLM);
+        e.ledger().set_timestamp(start + 3599);
+        w.client.open_challenge(&challenger, &id, &(50 * XLM));
+    }
+
+    e.ledger().set_timestamp(start + offset);
+    let hash = BytesN::from_array(&e, &[if matched { 3u8 } else { 9u8 }; 32]);
+    let result = match w.client.try_attest_replay(&rex, &id, &hash, &matched) {
+        Ok(Ok(_)) => Ok(()),
+        Err(Ok(err)) => Err(err),
+        other => panic!("unexpected result: {other:?}"),
+    };
+
+    // A refused vote leaves no trace: not in the tally, not on the voter.
+    let sub = w.client.get_submission(&id).unwrap();
+    let info = w.client.reexecutor_info(&rex).unwrap();
+    let counted = u32::from(result.is_ok());
+    assert_eq!(sub.match_votes + sub.mismatch_votes, counted);
+    assert_eq!(info.open_attestations, counted);
+    result
+}
+
+#[test]
+fn a_replay_vote_is_accepted_one_second_before_the_window_closes() {
+    assert_eq!(attest_replay_after(3599, false, true), Ok(()));
+    assert_eq!(attest_replay_after(3599, false, false), Ok(()));
+}
+
+#[test]
+fn a_replay_vote_is_rejected_exactly_at_the_window_deadline() {
+    assert_eq!(
+        attest_replay_after(3600, false, true),
+        Err(Error::ChallengeWindowClosed)
+    );
+    assert_eq!(
+        attest_replay_after(3600, false, false),
+        Err(Error::ChallengeWindowClosed)
+    );
+}
+
+#[test]
+fn a_replay_vote_stays_rejected_after_the_deadline() {
+    for offset in [3601, 4600, 86_400] {
+        assert_eq!(
+            attest_replay_after(offset, false, false),
+            Err(Error::ChallengeWindowClosed),
+            "{offset}"
+        );
+    }
+}
+
+#[test]
+fn a_replay_vote_on_a_challenged_submission_is_accepted_after_the_deadline() {
+    // resolve_challenge needs a consensus, and it may only form after the
+    // window, so the challenged path stays open until the submission is final.
+    for offset in [3599, 3600, 3601, 7198] {
+        assert_eq!(attest_replay_after(offset, true, false), Ok(()), "{offset}");
+        assert_eq!(attest_replay_after(offset, true, true), Ok(()), "{offset}");
+    }
+}
+
+#[test]
+fn a_late_mismatch_vote_cannot_turn_a_default_verified_into_expired_unverified() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    e.ledger().set_timestamp(1_000_000);
+    let start = e.ledger().timestamp();
+    let id = submit_default(&w, &agent);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+
+    // Nobody votes or challenges inside the window, and the keeper is late.
+    e.ledger().set_timestamp(start + 4600);
+    assert_eq!(
+        w.client
+            .try_attest_replay(&rex, &id, &BytesN::from_array(&e, &[9u8; 32]), &false),
+        Err(Ok(Error::ChallengeWindowClosed))
+    );
+
+    // The window's verdict is what it was when the window closed.
+    assert_eq!(w.client.finalize(&id), Verdict::Verified);
+    let sub = w.client.get_submission(&id).unwrap();
+    assert_eq!(sub.resolution_method, ResolutionMethod::WindowElapsed);
+    assert_eq!(sub.mismatch_votes, 0);
+    assert_eq!(w.token.balance(&agent), 1000 * XLM);
+    // The late voter is not locked by a vote that was never counted.
+    w.client.withdraw_stake(&rex, &(600 * XLM));
+}
+
+#[test]
+fn late_votes_cannot_complete_a_quorum_after_the_window() {
+    let e = Env::default();
+    let w = setup(&e); // quorum 3
+    let agent = Address::generate(&e);
+    e.ledger().set_timestamp(1_000_000);
+    let start = e.ledger().timestamp();
+    let id = submit_default(&w, &agent);
+    let wrong = BytesN::from_array(&e, &[9u8; 32]);
+    let rexes = [
+        Address::generate(&e),
+        Address::generate(&e),
+        Address::generate(&e),
+    ];
+    for rex in &rexes {
+        register_rex(&w, rex);
+    }
+
+    // Two mismatch votes inside the window: one short of a quorum.
+    w.client.attest_replay(&rexes[0], &id, &wrong, &false);
+    w.client.attest_replay(&rexes[1], &id, &wrong, &false);
+
+    // The third arrives after the deadline and would have made it a slash.
+    e.ledger().set_timestamp(start + 3600);
+    assert_eq!(
+        w.client.try_attest_replay(&rexes[2], &id, &wrong, &false),
+        Err(Ok(Error::ChallengeWindowClosed))
+    );
+
+    assert_eq!(w.client.finalize(&id), Verdict::ExpiredUnverified);
+    let sub = w.client.get_submission(&id).unwrap();
+    assert_eq!(sub.mismatch_votes, 2);
+    assert_eq!(sub.resolution_method, ResolutionMethod::WindowElapsed);
+    // Nothing was established, so the agent's bond comes back.
+    assert_eq!(w.token.balance(&agent), 1000 * XLM);
+}
+
 #[test]
 fn finalize_stays_pending_one_second_before_the_window_closes() {
     let (verdict, sub) = finalize_after(1000 * XLM, 50 * XLM, TaskType::Deterministic, 3599);
