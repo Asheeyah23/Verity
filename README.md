@@ -392,18 +392,23 @@ trust the proxy; otherwise all visitors share one budget.
 
 ### Idempotency of `POST /v1/submissions`
 
-`idempotency_key` is required. Retries are safe — a wallet prompt can be
-dismissed or a tab closed between build and relay:
+`idempotency_key` is required and scoped to the authenticated account. Retries
+are safe — a wallet prompt can be dismissed or a tab closed between build and
+relay:
 
 | Case | Response |
 |---|---|
-| key already used by a *different* account | 409 `{ "error": "idempotency_key is already in use" }` |
+| key used by a *different* account | keys are scoped to the authenticated account; another account may reuse the same key independently (201 with its own draft) |
 | same account, submission already on-chain | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign |
-| same account, draft never signed | draft updated, fresh transaction built; 200 `{ submission, unsigned_transaction_xdr, network_passphrase }` |
-| new key | 201 with the same three fields |
+| same account, relayed transaction already landed | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign; the indexer attaches `chain_submission_id` |
+| same account, draft relayed and possibly still landing (within the 5.5-minute validity window) | 409 `{ "error": "An earlier attempt for this idempotency_key was already sent to the network and may still confirm. Retry in a few minutes; it will resolve to that submission if it lands." }` — retry after a few minutes |
+| same account, draft never relayed, or earlier relay failed or expired | draft updated, fresh transaction built; 200 `{ submission, unsigned_transaction_xdr, network_passphrase }` |
+| new key for this account | 201 with the same three fields |
 
 Unsigned drafts older than `DRAFT_TTL_S` (default 3600 s) are purged by the
-scheduler.
+scheduler. In the rare race where a concurrent request for the same account
+collides with a draft that is purged between insert and re-read, the endpoint
+returns 409 `{ "error": "idempotency_key is already in use" }`.
 
 See [Webhooks](#webhooks) for registration, payloads and signature verification.
 
