@@ -21,7 +21,9 @@ const {
   buildSpotCheckEvidence,
   buildChallengeOpenedRow,
   buildChallengeResolvedPatch,
+  buildChallengeExpiredPatch,
 } = await import("./indexer.js");
+const { fromChainResolution } = await import("../chain/mappers.js");
 
 test("parseLedgerClosedAt parses valid ISO-8601 ledger close times without warning", () => {
   const warnings: string[] = [];
@@ -124,6 +126,20 @@ test("buildChallengeResolvedPatch records ledger close time for resolved_at", ()
     resolution_method: null,
     resolved_at: closedAt,
   });
+});
+
+test("buildChallengeExpiredPatch closes the challenge as expired, with no method, at the ledger close time", () => {
+  const closedAt = parseLedgerClosedAt("2026-11-22T11:00:05Z", { id: "ev-3", ledger: 260 });
+
+  const patch = buildChallengeExpiredPatch({ closedAt });
+
+  assert.deepEqual(patch, {
+    resolution: "expired",
+    resolution_method: null,
+    resolved_at: closedAt,
+  });
+  // The same outcome the mapper reports for the record finalize() leaves on-chain.
+  assert.equal(patch.resolution, fromChainResolution(["Expired"]));
 });
 
 test("buildReplayAttestedPatch and buildSpotCheckEvidence record ledger close time", () => {

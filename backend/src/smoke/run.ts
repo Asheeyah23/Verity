@@ -441,8 +441,8 @@ const underQuorumScenarios: Record<string, Scenario> = {
     return async () => {
       const d = await expectVerdict(id, "expired_unverified", "window_elapsed", cfg.window_tier_small_s + 360);
       expectNobodySlashed(d);
-      if (!d.challenge.resolved_at || d.challenge.resolution) {
-        throw new Error("expected the challenge to be closed with no resolution");
+      if (!d.challenge.resolved_at || d.challenge.resolution !== "expired") {
+        throw new Error(`expected the challenge to be closed as expired, got resolution=${d.challenge.resolution}`);
       }
     };
   },

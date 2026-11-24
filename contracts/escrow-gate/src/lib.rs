@@ -10,7 +10,7 @@ mod events;
 mod storage;
 
 use events::{
-    ChallengeOpened, ChallengeResolved, Finalized, ReexecutorApprovalChanged,
+    ChallengeExpired, ChallengeOpened, ChallengeResolved, Finalized, ReexecutorApprovalChanged,
     ReexecutorRegistered, ReexecutorStakeWithdrawn, ReplayAttested, Slashed, SubmissionCreated,
 };
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, BytesN, Env};
@@ -707,17 +707,30 @@ impl EscrowGate {
             return Ok(sub.verdict);
         }
 
-        let (verdict, method) = if let Some(chal) = storage::get_challenge(&e, submission_id) {
+        let (verdict, method) = if let Some(mut chal) = storage::get_challenge(&e, submission_id) {
             match chal.resolution {
                 Resolution::None => {
                     let deadline = chal.opened_at.saturating_add(sub.challenge_window_s);
                     if e.ledger().timestamp() < deadline || consensus_outcome(&sub)?.is_some() {
                         return Ok(Verdict::Pending);
                     }
+                    // Nobody resolved it in time. The record says so before
+                    // anything is settled, so get_challenge() no longer
+                    // shows an open challenge on a finalized submission.
+                    chal.resolution = Resolution::Expired;
+                    chal.resolution_method = ResolutionMethod::WindowElapsed;
+                    storage::set_challenge(&e, submission_id, &chal);
+                    ChallengeExpired { submission_id }.publish(&e);
                     (Verdict::ExpiredUnverified, ResolutionMethod::WindowElapsed)
                 }
                 Resolution::Upheld => (Verdict::Slashed, chal.resolution_method),
                 Resolution::Rejected => (Verdict::Verified, chal.resolution_method),
+                // Only the branch above writes this, in the call that also
+                // marks the submission finalized, so the early return has
+                // already answered. The arm keeps the match total.
+                Resolution::Expired => {
+                    (Verdict::ExpiredUnverified, ResolutionMethod::WindowElapsed)
+                }
             }
         } else {
             let now = e.ledger().timestamp();

@@ -53,6 +53,9 @@ pub enum Resolution {
     None,
     Upheld,
     Rejected,
+    /// Nobody resolved the challenge before it lapsed, and both bonds went
+    /// back. Written by `finalize`, never chosen by a caller.
+    Expired,
 }
 
 #[contracttype]

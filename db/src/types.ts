@@ -104,7 +104,8 @@ export interface SpotCheckTable {
   evidence: unknown | null;
 }
 
-export type ChallengeResolution = "upheld" | "rejected";
+/** `expired`: no quorum resolved the challenge in time; both bonds went back. */
+export type ChallengeResolution = "upheld" | "rejected" | "expired";
 export type ChallengeResolutionMethod =
   | "reexecution_consensus"
   | "zk_proof"

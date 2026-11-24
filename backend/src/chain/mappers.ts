@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { TaskType as ChainTaskType } from "escrow-gate";
-import type { SubmissionResolutionMethod, TaskType } from "@verity/db";
+import type { ChallengeResolution, SubmissionResolutionMethod, TaskType } from "@verity/db";
 
 export function toChainTaskType(t: TaskType): ChainTaskType {
   if (t === "deterministic") return { tag: "Deterministic", values: void 0 };
@@ -58,10 +58,13 @@ function describeValue(v: unknown): string {
   }
 }
 
-export function fromChainResolution(v: unknown): "upheld" | "rejected" | null {
+/** `Expired` is what finalize() writes on a challenge that lapsed with no
+ * resolution. Null for `None` (still open) and for anything unrecognised. */
+export function fromChainResolution(v: unknown): ChallengeResolution | null {
   const tag = enumTag(v);
   if (tag === "Upheld") return "upheld";
   if (tag === "Rejected") return "rejected";
+  if (tag === "Expired") return "expired";
   return null;
 }
 

@@ -140,6 +140,17 @@ export function buildChallengeResolvedPatch(params: {
   };
 }
 
+/** What `challenge_expired` writes. finalize() publishes it when a challenge
+ * lapsed with no resolution, so there is no method, and the event carries
+ * nothing to read but the submission it is about. */
+export function buildChallengeExpiredPatch(params: { closedAt: Date }) {
+  return {
+    resolution: "expired" as const,
+    resolution_method: null,
+    resolved_at: params.closedAt,
+  };
+}
+
 /** Idempotent by construction: every handler upserts on a unique key derived
  * from on-chain identity (chain_submission_id, (submission,reexecutor) pair,
  * etc.), so replaying the same event twice (e.g. after a restart) is safe. */
@@ -398,6 +409,28 @@ async function handleEvent(
           )
           .where("submission_id", "=", sub.id)
           .where("resolved_at", "is", null)
+          .execute();
+      }
+      break;
+    }
+
+    // Published by finalize() when a challenge lapsed with no resolution.
+    case "challenge_expired": {
+      const chainSubmissionId = String(topic[1]);
+      const sub = await db
+        .selectFrom("submission")
+        .select(["id"])
+        .where("chain_submission_id", "=", chainSubmissionId)
+        .executeTakeFirst();
+      if (sub) {
+        // Matched on the missing outcome, not on resolved_at: the keeper's
+        // recordTerminalVerdict can close the row before this event is
+        // indexed, and it writes the same outcome.
+        await db
+          .updateTable("challenge")
+          .set(buildChallengeExpiredPatch({ closedAt }))
+          .where("submission_id", "=", sub.id)
+          .where("resolution", "is", null)
           .execute();
       }
       break;
