@@ -1,13 +1,18 @@
 import "dotenv/config";
 import "./net.js";
 import { createHash } from "node:crypto";
-import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Keypair } from "@stellar/stellar-sdk";
 import { basicNodeSigner } from "@stellar/stellar-sdk/contract";
 import { Client as EscrowGateClient } from "escrow-gate";
 import type { SubmissionRecord } from "escrow-gate";
 import { REPLAY_ENGINE, ReplayInfrastructureError, runDeterministicFunction } from "./sandbox/runner.js";
 import { hasConnectivity, RetrievalTransientError, runRetrieval } from "./sandbox/retrieval.js";
-import { assertSep10Challenge } from "./sep10.js";
+import {
+  isInsecureBackendUrl,
+  resolveSep10ServerConfig,
+  verifySep10Challenge,
+  type Sep10ServerConfig,
+} from "./sep10.js";
 import { NO_OUTPUT_HASH, voteMatches } from "./vote.js";
 import { startHeartbeat } from "./heartbeat.js";
 
@@ -25,6 +30,13 @@ const RETRIEVAL_RETRY_BUDGET_S = numberEnv("RETRIEVAL_RETRY_BUDGET_S", 120, 1);
 // the problem is our network, and an unreachable target proves nothing.
 const CONNECTIVITY_CHECK_URL = process.env.CONNECTIVITY_CHECK_URL ?? RPC_URL;
 const ONCE = process.argv.includes("--once");
+// SEP-10 trust anchors. All three are optional: anything missing is
+// discovered once from the backend's /.well-known/stellar.toml at startup,
+// so pnpm dev and the compose fleet need no extra configuration. Set them to
+// pin the server instead of trusting the toml (see reexecutor-agent/.env.example).
+const SEP10_SERVER_KEY = process.env.SEP10_SERVER_KEY;
+const SEP10_HOME_DOMAIN = process.env.SEP10_HOME_DOMAIN;
+const SEP10_WEB_AUTH_DOMAIN = process.env.SEP10_WEB_AUTH_DOMAIN;
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -63,12 +75,29 @@ const client = new EscrowGateClient({
 
 let token: string | null = null;
 
+/** The server key and domains a challenge must match, discovered once from
+ * the backend's stellar.toml unless pinned in the environment. Resolved at
+ * startup (see main) so a misconfigured worker fails before it signs
+ * anything; login reuses the same resolution. */
+let sep10ConfigPromise: Promise<Sep10ServerConfig> | null = null;
+function sep10Config(): Promise<Sep10ServerConfig> {
+  sep10ConfigPromise ??= resolveSep10ServerConfig({
+    backendUrl: BACKEND_URL,
+    serverKey: SEP10_SERVER_KEY,
+    homeDomain: SEP10_HOME_DOMAIN,
+    webAuthDomain: SEP10_WEB_AUTH_DOMAIN,
+  });
+  return sep10ConfigPromise;
+}
+
 async function login(): Promise<string> {
   const challengeRes = await fetch(`${BACKEND_URL}/auth?account=${publicKey}`);
   if (!challengeRes.ok) throw new Error(`SEP-10 challenge request failed: HTTP ${challengeRes.status}`);
   const { transaction } = (await challengeRes.json()) as { transaction: string };
-  const tx = TransactionBuilder.fromXDR(transaction, NETWORK_PASSPHRASE);
-  assertSep10Challenge(tx, publicKey);
+  // The challenge is only signed once it proves it came from the expected
+  // server, for the expected domains, inside its time bounds — a challenge
+  // from any other server is refused here, before the signature exists.
+  const tx = verifySep10Challenge(transaction, await sep10Config(), NETWORK_PASSPHRASE, publicKey);
   tx.sign(keypair);
   const verifyRes = await fetch(`${BACKEND_URL}/auth`, {
     method: "POST",
@@ -290,6 +319,16 @@ async function pollOnce(reexecutorId: string) {
 async function main() {
   console.log(`[reexecutor-agent] starting as ${publicKey}`);
   console.log(`[reexecutor-agent] replay engine: ${REPLAY_ENGINE}`);
+  if (isInsecureBackendUrl(BACKEND_URL)) {
+    console.warn(
+      `[reexecutor-agent] BACKEND_URL is plain http to a public host (${BACKEND_URL}) — a challenge fetched over it can be swapped on the path. Prefer https.`
+    );
+  }
+  // Fail fast on a server we cannot trust, before the first login signs anything.
+  const sep10 = await sep10Config();
+  console.log(
+    `[reexecutor-agent] SEP-10 server key ${sep10.serverKey.slice(0, 8)}… home domain ${sep10.homeDomain} web-auth domain ${sep10.webAuthDomain}`
+  );
   // Mirrors this account's real on-chain stake into the backend, so an
   // account staked by script (or long ago) is assignable without re-staking.
   const { reexecutor } = await api<{
