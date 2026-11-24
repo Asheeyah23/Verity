@@ -360,6 +360,8 @@ on the routes marked above. The JWT lasts **1 hour** and carries the account
 as `sub`; a missing header is 401 `{ "error": "missing bearer token" }` and a
 bad or expired token 401 `{ "error": "invalid or expired token" }`.
 `GET /.well-known/stellar.toml` advertises the auth endpoint and signing key.
+`GET /auth`, `POST /auth`, and `OPTIONS /auth` send `Access-Control-Allow-Origin: *`
+so browser wallets can complete SEP-10 directly from third-party origins.
 
 Only `GET /auth` and `POST /v1/submissions` return `network_passphrase`.
 The other build endpoints do not: `POST /v1/submissions/:id/challenge`
