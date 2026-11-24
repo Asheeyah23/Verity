@@ -6,14 +6,17 @@
 //! Verity's own stack; shipped as integration documentation an external
 //! integrator can copy the pattern from (Rust) or reimplement against the
 //! exported EscrowGate contract spec (any language via stellar-sdk bindings).
+//!
+//! The contract is initialized atomically at deployment via `__constructor`,
+//! fixing the Verity `EscrowGate` and payment token addresses so setup cannot
+//! be front-run.
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 use verity_common::{Error, SubmissionRecord, Verdict};
 
 #[contracttype]
 #[derive(Clone)]
-enum DataKey {
-    Admin,
+pub(crate) enum DataKey {
     Gate,
     BondAsset,
     Escrow(u64),
@@ -44,15 +47,11 @@ fn escrow_ref_for(e: &Env, escrow_id: u64) -> BytesN<32> {
 
 #[contractimpl]
 impl ExampleMarketplaceEscrow {
-    pub fn initialize(e: Env, admin: Address, gate: Address, bond_asset: Address) -> Result<(), Error> {
-        if e.storage().instance().has(&DataKey::Admin) {
-            return Err(Error::AlreadyInitialized);
-        }
-        admin.require_auth();
-        e.storage().instance().set(&DataKey::Admin, &admin);
+    /// Runs once, atomically with deployment, so nobody can front-run the contract
+    /// setup by claiming a fake gate or token.
+    pub fn __constructor(e: Env, gate: Address, token: Address) {
         e.storage().instance().set(&DataKey::Gate, &gate);
-        e.storage().instance().set(&DataKey::BondAsset, &bond_asset);
-        Ok(())
+        e.storage().instance().set(&DataKey::BondAsset, &token);
     }
 
     /// The bounty poster escrows funds for a specific payee agent, unrelated
