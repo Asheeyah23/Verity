@@ -441,13 +441,13 @@ marketplace's Stellar account:
 {
   "url": "https://example.org/verity-webhook",
   "secret": "replace-with-a-long-random-secret",
-  "events": ["submission.verified", "submission.slashed", "submission.disputed"]
+  "events": ["submission.verified", "submission.slashed", "submission.expired_unverified", "submission.disputed"]
 }
 ```
 
 The request requires a valid URL of at most 2048 characters, a `secret` of 8
 to 256 characters, and a non-empty `events` array drawn from `submission.verified`,
-`submission.slashed` and `submission.disputed`; any other name is rejected
+`submission.slashed`, `submission.expired_unverified` and `submission.disputed`; any other name is rejected
 with HTTP 400 and duplicates are stored once. The marketplace ID is a UUID;
 only its own account may register a webhook (otherwise HTTP 403). A
 successful registration returns the subscription row with HTTP 201. A
@@ -472,13 +472,13 @@ the marketplace's own account (otherwise HTTP 403).
 | --- | --- | --- |
 | `submission.verified` | First transition into the `verified` terminal status | `submission_id`, `status: "verified"`, `tx_hash` |
 | `submission.slashed` | First transition into the `slashed` terminal status | `submission_id`, `status: "slashed"`, `tx_hash` |
+| `submission.expired_unverified` | First transition into the `expired_unverified` terminal status | `submission_id`, `status: "expired_unverified"`, `tx_hash` |
 | `submission.disputed` | When a new on-chain challenge is first recorded | `submission_id`, `status: "disputed"`, `tx_hash` |
 
 The `submission_id` is Verity's submission **UUID**, not its numeric on-chain
 submission ID. `tx_hash` is the relevant finalize/resolve or challenge
 transaction hash and can be `null` if a terminal verdict is first observed
-by reconciliation. The `expired_unverified` terminal status sends **no**
-webhook. A `submission.verified` event can result from a window expiring
+by reconciliation. A `submission.verified` event can result from a window expiring
 without consensus; inspect the submission's `resolution_method` via
 `GET /v1/submissions/:id` to distinguish how the verdict was reached.
 

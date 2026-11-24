@@ -31,7 +31,7 @@ Object.assign(process.env, {
 import { HttpError } from "../../http-error.js";
 import { ZodError } from "zod";
 
-const { marketplacesRoutes } = await import("./routes.js");
+const { marketplacesRoutes, WEBHOOK_EVENTS, createWebhookBody } = await import("./routes.js");
 const { issueJwt } = await import("../../auth/sep10.js");
 
 class MockDriver {
@@ -225,4 +225,47 @@ test("deleting one of 10 webhooks frees a slot and allows new registration", asy
     },
   });
   assert.equal(res201.statusCode, 201);
+});
+
+const validBase = {
+  url: "https://example.org/verity-webhook",
+  secret: "super-secret-token",
+};
+
+test("WEBHOOK_EVENTS includes submission.expired_unverified alongside the other events", () => {
+  assert.deepEqual([...WEBHOOK_EVENTS], [
+    "submission.verified",
+    "submission.slashed",
+    "submission.expired_unverified",
+    "submission.disputed",
+  ]);
+});
+
+test("createWebhookBody accepts submission.expired_unverified alone or with other events", () => {
+  const single = createWebhookBody.parse({
+    ...validBase,
+    events: ["submission.expired_unverified"],
+  });
+  assert.deepEqual(single.events, ["submission.expired_unverified"]);
+
+  const all = createWebhookBody.parse({
+    ...validBase,
+    events: [
+      "submission.verified",
+      "submission.slashed",
+      "submission.expired_unverified",
+      "submission.disputed",
+    ],
+  });
+  assert.equal(all.events.length, 4);
+});
+
+test("createWebhookBody rejects unknown event names and empty event lists", () => {
+  assert.throws(() =>
+    createWebhookBody.parse({ ...validBase, events: ["submission.pending"] })
+  );
+  assert.throws(() =>
+    createWebhookBody.parse({ ...validBase, events: ["submission.unknown"] })
+  );
+  assert.throws(() => createWebhookBody.parse({ ...validBase, events: [] }));
 });
