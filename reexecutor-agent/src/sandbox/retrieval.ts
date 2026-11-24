@@ -24,6 +24,9 @@ const TIMEOUT_MS = 10_000;
  * server dripping a byte every few seconds would otherwise hold the worker
  * (and its heartbeat) for as long as it likes. */
 const TOTAL_TIMEOUT_MS = 30_000;
+/** Sent on every retrieval request. Keep fixed across versions (and in sync with
+ * README.md) so target behaviour does not vary by worker version. */
+export const RETRIEVAL_USER_AGENT = "Verity-Reexecutor/1 (+https://github.com/DevQwinB/Verity)";
 
 /**
  * The target could not be reached (DNS failure including ENOTFOUND, network error),
@@ -96,7 +99,10 @@ export function getPinned(target: PinnedTarget, totalTimeoutMs = TOTAL_TIMEOUT_M
     const req = transport.get(
       target.url,
       {
-        headers: { accept: "application/json, text/plain;q=0.9, */*;q=0.1" },
+        headers: {
+          accept: "application/json, text/plain;q=0.9, */*;q=0.1",
+          "user-agent": RETRIEVAL_USER_AGENT,
+        },
         timeout: TIMEOUT_MS,
         // Connect to the address that was vetted, whatever DNS says now.
         lookup: (_hostname, options, callback) => {
@@ -178,15 +184,25 @@ export function isInconclusiveStatus(status: number): boolean {
 
 /**
  * Re-issues the declared request. Throws a plain Error for an outcome that
- * settles the question against the submission (bad spec, private target,
- * redirect, definitive 4xx like 404/410, oversize, pointer that does not resolve), and a
- * RetrievalTransientError for one that is inconclusive (unresolvable host, target
- * unreachable, >= 500, 408, 429, 401, 403, 451).
+ * settles the question against the submission (bad spec, credentials in URL,
+ * private target, redirect, definitive 4xx like 404/410, oversize, pointer
+ * that does not resolve), and a RetrievalTransientError for one that is
+ * inconclusive (unresolvable host, target unreachable, >= 500, 408, 429, 401,
+ * 403, 451).
  * After the retry budget a still-failing target is voted as a mismatch.
  */
 export async function runRetrieval(spec: RetrievalSpec): Promise<{ outputHash: string; output: unknown; engine: string }> {
   if (!spec || typeof spec.url !== "string") {
     throw new Error('retrieval input artifact must be JSON of the form {"url": "...", "pointer"?: "/..."}');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(spec.url);
+  } catch {
+    throw new Error(`retrieval url is not a valid URL: ${spec.url}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("retrieval url must not contain credentials");
   }
   const target = await resolvePublicTarget(spec.url);
   const res = await getPinned(target);

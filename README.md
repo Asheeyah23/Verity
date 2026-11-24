@@ -263,11 +263,14 @@ Deterministic tasks run in a sandboxed JavaScript runtime:
 12. **Spec format.** The input artifact must be JSON conforming to `{"url": "...", "pointer"?: "/..."}`.
     Invalid JSON or a missing string `url` counts as a mismatch.
 13. **HTTP request rules.** The re-executor issues a single `GET` request with
-    `accept: application/json, text/plain;q=0.9, */*;q=0.1` and no credentials, auth headers,
-    or cookies. The endpoint must be publicly accessible without authentication.
-    Only `http:` and `https:` schemes are supported. The URL must resolve to a public IP
-    address: loopback, private, and link-local IP addresses are rejected, and the request
-    connects directly to the validated IP.
+    `accept: application/json, text/plain;q=0.9, */*;q=0.1` and
+    `user-agent: Verity-Reexecutor/1 (+https://github.com/DevQwinB/Verity)`, and no
+    credentials, auth headers, or cookies. URLs containing embedded credentials
+    (`user:pass@`) are rejected as a mismatch before any request is sent. The endpoint must
+    be publicly accessible without authentication. Only `http:` and `https:` schemes are
+    supported. The URL must resolve to a public IP address: loopback, private, and
+    link-local IP addresses are rejected, and the request connects directly to the
+    validated IP.
 14. **Redirects and response codes.** Redirects are not followed; HTTP 3xx status codes
     are treated as a mismatch. Definitive 4xx statuses (for example 404 or 410) and other
     non-2xx responses are also mismatches. Statuses 401, 403, 408, 429, 451 and anything
