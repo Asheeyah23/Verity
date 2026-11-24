@@ -200,7 +200,7 @@ submit() + agent bond ──▶ SubmissionCreated event ──▶ indexer mirror
         │        mismatch → escalate this and the agent's other pending
         │                   submissions to a full quorum
         │
-        └─ anyone ─ open_challenge() + bond (while the window is open)
+        └─ anyone but the agent ─ open_challenge() + bond (while the window is open)
                          → resolve_challenge() by re-execution consensus
                            (the ZK method is rejected in Phase 1)
 
