@@ -45,6 +45,13 @@ fn validate_config(cfg: &ConfigRecord) -> Result<(), Error> {
     {
         return Err(Error::InvalidConfig);
     }
+    // The tiers exist so that a larger escrow can be challenged for longer.
+    // With the small window the longer one, submit() would give a small job
+    // more time than a large one. Equal windows are fine: one window for
+    // every escrow, as the dev deployment has.
+    if cfg.window_tier_small_s > cfg.window_tier_large_s {
+        return Err(Error::InvalidConfig);
+    }
     if cfg.agent_bond_min_bps == 0 || cfg.agent_bond_min_bps > ConfigRecord::MAX_BPS {
         return Err(Error::InvalidConfig);
     }

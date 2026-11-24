@@ -1075,6 +1075,76 @@ fn config_accepts_max_window_boundary() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn constructor_rejects_a_small_window_longer_than_the_large_one() {
+    let e = Env::default();
+    // The example from the issue: a small job would get 7 days and a large one 10 minutes.
+    setup_with(
+        &e,
+        ConfigRecord {
+            window_tier_small_s: crate::MAX_WINDOW_S,
+            window_tier_large_s: ConfigRecord::MIN_WINDOW_S,
+            ..default_config()
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn constructor_rejects_a_small_window_one_second_longer_than_the_large_one() {
+    let e = Env::default();
+    setup_with(
+        &e,
+        ConfigRecord {
+            window_tier_small_s: 3601,
+            window_tier_large_s: 3600,
+            ..default_config()
+        },
+    );
+}
+
+#[test]
+fn equal_window_tiers_are_accepted_by_the_constructor_and_by_update_config() {
+    // One window for every escrow. 600 / 600 is what the dev deployment uses.
+    for window in [ConfigRecord::MIN_WINDOW_S, 3600, crate::MAX_WINDOW_S] {
+        let e = Env::default();
+        let cfg = ConfigRecord {
+            window_tier_small_s: window,
+            window_tier_large_s: window,
+            ..default_config()
+        };
+        let w = setup_with(&e, cfg.clone());
+        assert_config_eq(&w.client.get_config().unwrap(), &cfg);
+
+        let other = setup(&e);
+        other.client.update_config(&other.admin, &cfg);
+        assert_config_eq(&other.client.get_config().unwrap(), &cfg);
+    }
+}
+
+#[test]
+fn a_small_window_shorter_than_the_large_one_is_still_accepted() {
+    let e = Env::default();
+    // The testnet defaults, and the closest the two can get without being equal.
+    for (small, large) in [
+        (3600, 86_400),
+        (3599, 3600),
+        (ConfigRecord::MIN_WINDOW_S, crate::MAX_WINDOW_S),
+    ] {
+        let cfg = ConfigRecord {
+            window_tier_small_s: small,
+            window_tier_large_s: large,
+            ..default_config()
+        };
+        let w = setup_with(&e, cfg.clone());
+        assert_config_eq(&w.client.get_config().unwrap(), &cfg);
+        w.client.update_config(&w.admin, &default_config());
+        w.client.update_config(&w.admin, &cfg);
+        assert_config_eq(&w.client.get_config().unwrap(), &cfg);
+    }
+}
+
+#[test]
 fn zero_slash_bps_disables_reexecutor_slashing() {
     let e = Env::default();
     let w = setup_with(&e, ConfigRecord { reexecutor_slash_bps: 0, ..default_config() });
@@ -1463,6 +1533,14 @@ fn update_config_rejects_each_invalid_rule() {
         ),
         ("small window too short", ConfigRecord { window_tier_small_s: below_min_window, ..d() }),
         ("large window too short", ConfigRecord { window_tier_large_s: below_min_window, ..d() }),
+        (
+            "small window longer than the large one",
+            ConfigRecord { window_tier_small_s: 7200, window_tier_large_s: 3600, ..d() },
+        ),
+        (
+            "small window one second longer than the large one",
+            ConfigRecord { window_tier_small_s: 3601, window_tier_large_s: 3600, ..d() },
+        ),
         ("zero agent bond", ConfigRecord { agent_bond_min_bps: 0, ..d() }),
         ("agent bond above 100%", ConfigRecord { agent_bond_min_bps: above_max_bps, ..d() }),
         ("zero challenger bond", ConfigRecord { challenger_bond_min_bps: 0, ..d() }),
