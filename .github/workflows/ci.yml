@@ -51,6 +51,11 @@ jobs:
       - run: pnpm --filter @verity/frontend test
       - run: pnpm lint
       - run: pnpm --filter @verity/frontend build
+      - name: Verify backend start script
+        run: |
+          output=$(pnpm --filter @verity/backend start 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "Invalid environment configuration"
 
   images:
     name: Container images build
