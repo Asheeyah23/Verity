@@ -87,28 +87,42 @@ export async function marketplacesRoutes(app: FastifyInstance, opts?: { db?: Kys
     const params = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = createWebhookBody.parse(req.body);
     if (!(await ownsMarketplace(params.id, req.stellarAccount, reply, database))) return notOwnerError;
+    // Verify target URL is public before taking a database transaction lock
     await assertPublicHttpUrl(body.url);
-    const { count } = await database
-      .selectFrom("webhook_subscription")
-      .select((eb) => eb.fn.countAll().as("count"))
-      .where("marketplace_id", "=", params.id)
-      .executeTakeFirstOrThrow();
-    if (Number(count) >= MAX_WEBHOOKS_PER_MARKETPLACE) {
-      throw new HttpError(
-        409,
-        `a marketplace can have at most ${MAX_WEBHOOKS_PER_MARKETPLACE} webhook subscriptions; delete an existing subscription to free a slot`
-      );
-    }
-    const row = await database
-      .insertInto("webhook_subscription")
-      .values({
-        marketplace_id: params.id,
-        url: body.url,
-        secret: body.secret,
-        events: [...new Set(body.events)],
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+
+    const row = await database.transaction().execute(async (trx) => {
+      // Hold a row lock on the marketplace row so concurrent registrations for
+      // this marketplace are serialized and cannot race past the cap.
+      await trx
+        .selectFrom("marketplace")
+        .select("id")
+        .where("id", "=", params.id)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+
+      const { count } = await trx
+        .selectFrom("webhook_subscription")
+        .select((eb) => eb.fn.countAll().as("count"))
+        .where("marketplace_id", "=", params.id)
+        .executeTakeFirstOrThrow();
+      if (Number(count) >= MAX_WEBHOOKS_PER_MARKETPLACE) {
+        throw new HttpError(
+          409,
+          `a marketplace can have at most ${MAX_WEBHOOKS_PER_MARKETPLACE} webhook subscriptions; delete an existing subscription to free a slot`
+        );
+      }
+      return trx
+        .insertInto("webhook_subscription")
+        .values({
+          marketplace_id: params.id,
+          url: body.url,
+          secret: body.secret,
+          events: [...new Set(body.events)],
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    });
+
     reply.code(201);
     return row;
   });
