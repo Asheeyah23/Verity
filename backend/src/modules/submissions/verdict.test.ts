@@ -30,7 +30,7 @@ Object.assign(process.env, {
   HOME_DOMAIN: "localhost",
 });
 
-const { recordTerminalVerdict } = await import("./verdict.js");
+const { recordTerminalVerdict, buildVerdictWebhookPayload } = await import("./verdict.js");
 const { dispatchWebhook } = await import("../webhooks/dispatcher.js");
 
 interface FakeSubmissionRow {
@@ -38,6 +38,7 @@ interface FakeSubmissionRow {
   marketplace_id: string;
   status: SubmissionStatus;
   chain_submission_id: string | null;
+  escrow_ref: string;
   resolution_method: SubmissionResolutionMethod | null;
   finalize_tx_hash: string | null;
   updated_at: Date;
@@ -70,11 +71,24 @@ function createHarness(initial: {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
       const { sql, parameters } = compiled;
 
-      if (sql.startsWith('update "submission" set "status" = $1, "updated_at" = $2 where "id" = $3 and "status" != $4')) {
-        const [newStatus, updatedAt, id, notStatus] = parameters as [SubmissionStatus, Date, string, SubmissionStatus];
+      if (
+        sql.startsWith(
+          'update "submission" set "status" = $1, "resolution_method" = $2, "finalize_tx_hash" = $3, "updated_at" = $4 where "id" = $5 and "status" != $6'
+        )
+      ) {
+        const [newStatus, resolutionMethod, finalizeTxHash, updatedAt, id, notStatus] = parameters as [
+          SubmissionStatus,
+          SubmissionResolutionMethod | null,
+          string | null,
+          Date,
+          string,
+          SubmissionStatus,
+        ];
         const row = submissions.find((s) => s.id === id && s.status !== notStatus);
         if (!row) return { rows: [] };
         row.status = newStatus;
+        row.resolution_method = resolutionMethod;
+        row.finalize_tx_hash = finalizeTxHash;
         row.updated_at = updatedAt;
         return { rows: [{ ...row } as unknown as R] };
       }
@@ -175,6 +189,7 @@ function makeSub(overrides: Partial<FakeSubmissionRow> = {}): FakeSubmissionRow 
     marketplace_id: MARKETPLACE_A,
     status: "pending",
     chain_submission_id: "42",
+    escrow_ref: "escrow-ref-1",
     resolution_method: null,
     finalize_tx_hash: null,
     updated_at: new Date("2026-10-25T00:00:00.000Z"),
@@ -216,7 +231,10 @@ test("transitioning to expired_unverified delivers once to subscribed hooks and 
       eventType: "submission.expired_unverified",
       payload: {
         submission_id: SUBMISSION_ID,
+        chain_submission_id: "42",
+        escrow_ref: "escrow-ref-1",
         status: "expired_unverified",
+        resolution_method: "window_elapsed",
         tx_hash: txHash,
       },
     },
@@ -225,7 +243,10 @@ test("transitioning to expired_unverified delivers once to subscribed hooks and 
       eventType: "submission.expired_unverified",
       payload: {
         submission_id: SUBMISSION_ID,
+        chain_submission_id: "42",
+        escrow_ref: "escrow-ref-1",
         status: "expired_unverified",
+        resolution_method: "window_elapsed",
         tx_hash: txHash,
       },
     },
@@ -254,7 +275,10 @@ test("expired_unverified without txHash sends tx_hash: null, fills resolution_me
       eventType: "submission.expired_unverified",
       payload: {
         submission_id: SUBMISSION_ID,
+        chain_submission_id: "42",
+        escrow_ref: "escrow-ref-1",
         status: "expired_unverified",
+        resolution_method: "window_elapsed",
         tx_hash: null,
       },
     },
@@ -285,7 +309,10 @@ test("verified and slashed continue to dispatch with the same payload shape", as
         eventType: `submission.${terminal}`,
         payload: {
           submission_id: SUBMISSION_ID,
+          chain_submission_id: "42",
+          escrow_ref: "escrow-ref-1",
           status: terminal,
+          resolution_method: "reexecution_consensus",
           tx_hash: txHash,
         },
       },
@@ -315,4 +342,64 @@ test("non-terminal statuses are ignored and dispatch no webhook", async () => {
 
   assert.equal(harness.deliveries.length, 0);
   assert.equal(harness.submissions[0]!.status, "pending");
+});
+
+test("buildVerdictWebhookPayload creates complete payload for verified consensus verdict", () => {
+  const sub = {
+    id: "11111111-1111-4111-8111-111111111111",
+    chain_submission_id: "42",
+    escrow_ref: "escrow-order-123",
+    resolution_method: "reexecution_consensus" as const,
+  };
+
+  const payload = buildVerdictWebhookPayload(sub, "verified", "0xabc123");
+
+  assert.deepEqual(payload, {
+    submission_id: "11111111-1111-4111-8111-111111111111",
+    chain_submission_id: "42",
+    escrow_ref: "escrow-order-123",
+    status: "verified",
+    resolution_method: "reexecution_consensus",
+    tx_hash: "0xabc123",
+  });
+});
+
+test("buildVerdictWebhookPayload creates complete payload for slashed verdict with null tx_hash", () => {
+  const sub = {
+    id: "22222222-2222-4222-8222-222222222222",
+    chain_submission_id: "99",
+    escrow_ref: "escrow-order-456",
+    resolution_method: "window_elapsed" as const,
+  };
+
+  const payload = buildVerdictWebhookPayload(sub, "slashed", null);
+
+  assert.deepEqual(payload, {
+    submission_id: "22222222-2222-4222-8222-222222222222",
+    chain_submission_id: "99",
+    escrow_ref: "escrow-order-456",
+    status: "slashed",
+    resolution_method: "window_elapsed",
+    tx_hash: null,
+  });
+});
+
+test("buildVerdictWebhookPayload handles optional fields when null or undefined", () => {
+  const sub = {
+    id: "33333333-3333-4333-8333-333333333333",
+    chain_submission_id: null,
+    escrow_ref: "escrow-order-789",
+    resolution_method: null,
+  };
+
+  const payload = buildVerdictWebhookPayload(sub, "verified", undefined);
+
+  assert.deepEqual(payload, {
+    submission_id: "33333333-3333-4333-8333-333333333333",
+    chain_submission_id: null,
+    escrow_ref: "escrow-order-789",
+    status: "verified",
+    resolution_method: null,
+    tx_hash: null,
+  });
 });

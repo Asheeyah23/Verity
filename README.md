@@ -476,17 +476,12 @@ the marketplace's own account (otherwise HTTP 403).
 
 | Event | When emitted | `data` |
 | --- | --- | --- |
-| `submission.verified` | First transition into the `verified` terminal status | `submission_id`, `status: "verified"`, `tx_hash` |
-| `submission.slashed` | First transition into the `slashed` terminal status | `submission_id`, `status: "slashed"`, `tx_hash` |
-| `submission.expired_unverified` | First transition into the `expired_unverified` terminal status | `submission_id`, `status: "expired_unverified"`, `tx_hash` |
+| `submission.verified` | First transition into the `verified` terminal status | `submission_id`, `chain_submission_id`, `escrow_ref`, `status: "verified"`, `resolution_method`, `tx_hash` |
+| `submission.slashed` | First transition into the `slashed` terminal status | `submission_id`, `chain_submission_id`, `escrow_ref`, `status: "slashed"`, `resolution_method`, `tx_hash` |
+| `submission.expired_unverified` | First transition into the `expired_unverified` terminal status | `submission_id`, `chain_submission_id`, `escrow_ref`, `status: "expired_unverified"`, `resolution_method`, `tx_hash` |
 | `submission.disputed` | When a new on-chain challenge is first recorded | `submission_id`, `status: "disputed"`, `tx_hash` |
 
-The `submission_id` is Verity's submission **UUID**, not its numeric on-chain
-submission ID. `tx_hash` is the relevant finalize/resolve or challenge
-transaction hash and can be `null` if a terminal verdict is first observed
-by reconciliation. A `submission.verified` event can result from a window expiring
-without consensus; inspect the submission's `resolution_method` via
-`GET /v1/submissions/:id` to distinguish how the verdict was reached.
+The `submission_id` is Verity's submission **UUID**, `chain_submission_id` is its numeric on-chain submission ID (or `null`), and `escrow_ref` is the caller's escrow reference. `tx_hash` is the relevant finalize/resolve or challenge transaction hash and can be `null` if a terminal verdict is first observed by reconciliation. The verdict's `resolution_method` (`reexecution_consensus`, `window_elapsed`, `zk_proof`) is stored and included directly in the payload, so a `submission.verified` that came from a window expiring without consensus can be told apart without another request.
 
 Each delivery is an HTTP `POST` with `content-type: application/json` and
 three headers (`x-verity-delivery`, `x-verity-timestamp`, `x-verity-signature`), containing the UTF-8 JSON serialization
@@ -498,7 +493,10 @@ only a **shape example**; the identifiers below are placeholders:
   "event": "submission.verified",
   "data": {
     "submission_id": "<verity-submission-uuid>",
+    "chain_submission_id": "7",
+    "escrow_ref": "order-1234",
     "status": "verified",
+    "resolution_method": "reexecution_consensus",
     "tx_hash": null
   }
 }
