@@ -2,8 +2,10 @@ import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
+import { Networks } from "@stellar/stellar-sdk";
 import { canonicalHash } from "./canonical.js";
 import { isPrivateAddress } from "./address.js";
+import { NO_OUTPUT_HASH } from "../vote.js";
 
 export { isPrivateAddress };
 
@@ -224,18 +226,117 @@ export async function runRetrieval(spec: RetrievalSpec): Promise<{ outputHash: s
   return { outputHash: canonicalHash(output), output, engine: "http-refetch (public egress only, address pinned)" };
 }
 
-/** True if this host can reach its known-good endpoint at all: any HTTP
- * answer counts. Used before blaming a target for being unreachable.
+export interface ConnectivityResult {
+  reachable: boolean;
+  public: boolean;
+}
+
+/** Reports whether this host can reach the endpoint at controlUrl, and whether
+ * that endpoint is on the public internet. Used before blaming a target for
+ * being unreachable.
  *
  * controlUrl comes from the operator's own configuration (by default their
  * Soroban RPC URL, often on localhost or a private network), not from a
- * submitter, so it may resolve to a private address. That is deliberately
- * not true of retrieval targets: runRetrieval still refuses them. */
-export async function hasConnectivity(controlUrl: string): Promise<boolean> {
+ * submitter, so it may resolve to a private address. If it does, public is
+ * false; a private probe that succeeds does not prove internet access on its
+ * own. */
+export async function hasConnectivity(controlUrl: string): Promise<ConnectivityResult> {
   try {
-    await getPinned(await resolvePublicTarget(controlUrl, { allowPrivate: true }));
-    return true;
+    const target = await resolvePublicTarget(controlUrl, { allowPrivate: true });
+    await getPinned(target);
+    return { reachable: true, public: !isPrivateAddress(target.address) };
   } catch {
-    return false;
+    return { reachable: false, public: false };
+  }
+}
+
+/** Returns the default public endpoint to probe for internet access based on the
+ * network passphrase. Horizon root is public and returns 200 OK. */
+export function defaultInternetCheckUrl(networkPassphrase?: string): string {
+  return networkPassphrase === Networks.PUBLIC
+    ? "https://horizon.stellar.org"
+    : "https://horizon-testnet.stellar.org";
+}
+
+/**
+ * Asserts that this host has proven outbound connectivity before blaming an unreachable
+ * retrieval target.
+ *
+ * If connectivityUrl is private, this host must also verify public internet access via
+ * internetUrl. Throws an error if outbound connectivity or internet access cannot be proven.
+ */
+export async function assertOutboundConnectivity(
+  connectivityUrl: string,
+  internetUrl?: string,
+  probe: (url: string) => Promise<ConnectivityResult> = hasConnectivity
+): Promise<void> {
+  const primary = await probe(connectivityUrl);
+  if (!primary.reachable) {
+    throw new Error("this host has no outbound connectivity; not voting");
+  }
+  if (!primary.public) {
+    const secondary = await probe(internetUrl ?? defaultInternetCheckUrl());
+    if (!secondary.reachable || !secondary.public) {
+      throw new Error("this host has no public internet access; not voting");
+    }
+  }
+}
+
+export interface DecideRetrievalVoteOptions {
+  message: string;
+  budget: number;
+  connectivityUrl: string;
+  internetUrl?: string;
+  probe?: (url: string) => Promise<ConnectivityResult>;
+}
+
+/**
+ * Decides whether to cast a mismatch vote for a target that stayed unreachable.
+ *
+ * Only casts the mismatch vote if this host proves it has public internet access.
+ * If only a private probe succeeds (or no probe succeeds), throws an Error so that
+ * the assignment is retried rather than voting against an honest submitter.
+ */
+export async function decideRetrievalTargetUnreachable(
+  opts: DecideRetrievalVoteOptions
+): Promise<{ outputHash: string; engine: string }> {
+  const probe = opts.probe ?? hasConnectivity;
+  try {
+    await assertOutboundConnectivity(opts.connectivityUrl, opts.internetUrl, probe);
+  } catch (err) {
+    throw new Error(`retrieval inconclusive (${opts.message}) and ${(err as Error).message}`);
+  }
+  return {
+    outputHash: NO_OUTPUT_HASH,
+    engine: `retrieval failed: target unreachable for ${Math.round(opts.budget)}s while this host was online (${opts.message})`,
+  };
+}
+
+/**
+ * Logs a warning at startup if the configured connectivity probe resolves to a private
+ * address and no public probe is reachable.
+ */
+export async function warnIfProbePrivateAndNoInternet(
+  connectivityUrl: string,
+  internetUrl: string,
+  probe: (url: string) => Promise<ConnectivityResult> = hasConnectivity,
+  logger: { warn: (msg: string) => void } = console
+): Promise<void> {
+  let isPrivate = false;
+  try {
+    const target = await resolvePublicTarget(connectivityUrl, { allowPrivate: true });
+    isPrivate = isPrivateAddress(target.address);
+  } catch {
+    const res = await probe(connectivityUrl);
+    isPrivate = res.reachable && !res.public;
+  }
+
+  if (isPrivate) {
+    const secondary = await probe(internetUrl);
+    if (!secondary.reachable || !secondary.public) {
+      logger.warn(
+        `[reexecutor-agent] CONNECTIVITY_CHECK_URL (${connectivityUrl}) resolves to a private address and no public probe is reachable (${internetUrl}) — unreachable retrieval targets will not be judged as mismatches`
+      );
+    }
   }
 }

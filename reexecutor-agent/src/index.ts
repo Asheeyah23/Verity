@@ -6,7 +6,14 @@ import { basicNodeSigner } from "@stellar/stellar-sdk/contract";
 import { Client as EscrowGateClient } from "escrow-gate";
 import type { SubmissionRecord } from "escrow-gate";
 import { REPLAY_ENGINE, ReplayInfrastructureError, runDeterministicFunction } from "./sandbox/runner.js";
-import { hasConnectivity, RetrievalTransientError, runRetrieval } from "./sandbox/retrieval.js";
+import {
+  decideRetrievalTargetUnreachable,
+  defaultInternetCheckUrl,
+  hasConnectivity,
+  RetrievalTransientError,
+  runRetrieval,
+  warnIfProbePrivateAndNoInternet,
+} from "./sandbox/retrieval.js";
 import {
   isInsecureBackendUrl,
   resolveSep10ServerConfig,
@@ -29,6 +36,9 @@ const RETRIEVAL_RETRY_BUDGET_S = numberEnv("RETRIEVAL_RETRY_BUDGET_S", 120, 1);
 // Any endpoint this worker must be able to reach anyway. If even this fails,
 // the problem is our network, and an unreachable target proves nothing.
 const CONNECTIVITY_CHECK_URL = process.env.CONNECTIVITY_CHECK_URL ?? RPC_URL;
+// When CONNECTIVITY_CHECK_URL is a private address, this public endpoint must
+// be reachable to prove internet access before voting mismatch on an unreachable target.
+const INTERNET_CHECK_URL = process.env.INTERNET_CHECK_URL ?? defaultInternetCheckUrl(NETWORK_PASSPHRASE);
 const ONCE = process.argv.includes("--once");
 // SEP-10 trust anchors. All three are optional: anything missing is
 // discovered once from the backend's /.well-known/stellar.toml at startup,
@@ -202,10 +212,12 @@ async function reExecute(
       if (now < giveUpAt) {
         throw new Error(`retrieval inconclusive (${message}); retrying for another ${Math.ceil(giveUpAt - now)}s before judging`);
       }
-      if (!(await hasConnectivity(CONNECTIVITY_CHECK_URL))) {
-        throw new Error(`retrieval inconclusive (${message}) and this host has no outbound connectivity; not voting`);
-      }
-      return noOutput(`retrieval failed: target unreachable for ${Math.round(budget)}s while this host was online (${message})`);
+      return await decideRetrievalTargetUnreachable({
+        message,
+        budget,
+        connectivityUrl: CONNECTIVITY_CHECK_URL,
+        internetUrl: INTERNET_CHECK_URL,
+      });
     }
   }
 
@@ -321,6 +333,7 @@ async function pollOnce(reexecutorId: string) {
 async function main() {
   console.log(`[reexecutor-agent] starting as ${publicKey}`);
   console.log(`[reexecutor-agent] replay engine: ${REPLAY_ENGINE}`);
+  await warnIfProbePrivateAndNoInternet(CONNECTIVITY_CHECK_URL, INTERNET_CHECK_URL);
   if (isInsecureBackendUrl(BACKEND_URL)) {
     console.warn(
       `[reexecutor-agent] BACKEND_URL is plain http to a public host (${BACKEND_URL}) — a challenge fetched over it can be swapped on the path. Prefer https.`
