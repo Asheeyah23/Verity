@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { backendGet } from "../../lib/server-api";
-import type { ChallengeListItem } from "../../lib/types";
+import type { ChallengeListItem, GateConfig } from "../../lib/types";
 import { Card, CardBody } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
 import { Pager, PAGE_SIZE, parsePage } from "../../components/pager";
-import { stroopsToXlm, truncateMiddle, formatRelativeTime } from "../../lib/format";
+import { formatRelativeTime, formatUnits, resolveBondAsset, truncateMiddle } from "../../lib/format";
 import { TESTNET_EXPLORER_TX } from "../../lib/config";
 
 export const metadata: Metadata = { title: "Challenges" };
@@ -31,10 +31,14 @@ export default async function ChallengesPage({
   searchParams: Promise<{ page?: string }>;
 }) {
   const page = parsePage((await searchParams).page);
-  const rows = await backendGet<ChallengeListItem[]>(
-    `/v1/challenges?limit=${PAGE_SIZE + 1}&offset=${(page - 1) * PAGE_SIZE}`
-  );
+  const [rows, config] = await Promise.all([
+    backendGet<ChallengeListItem[]>(
+      `/v1/challenges?limit=${PAGE_SIZE + 1}&offset=${(page - 1) * PAGE_SIZE}`
+    ),
+    backendGet<GateConfig>("/v1/config"),
+  ]);
   const challenges = rows.slice(0, PAGE_SIZE);
+  const asset = resolveBondAsset(config.bond_asset);
 
   return (
     <div className="space-y-6">
@@ -82,7 +86,9 @@ export default async function ChallengesPage({
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="text-right">
-                        <p className="font-mono text-sm">{stroopsToXlm(c.challenger_bond)} XLM bond</p>
+                        <p className="font-mono text-sm">
+                          {formatUnits(c.challenger_bond, asset.decimals, asset.symbol)} bond
+                        </p>
                         <p className="text-xs text-text-tertiary">{o.note}</p>
                       </div>
                       <Badge tone={o.tone}>{o.label}</Badge>

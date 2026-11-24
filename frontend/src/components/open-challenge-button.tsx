@@ -7,7 +7,8 @@ import { Button } from "./ui/button";
 import { openChallenge, relayChallenge } from "../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../lib/wallet";
 import { TESTNET_EXPLORER_TX } from "../lib/config";
-import { challengeWindowState, stroopsToXlm, xlmToStroops } from "../lib/format";
+import { challengeWindowState, formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../lib/format";
+import type { BondAsset } from "../lib/types";
 
 const POLL_EVERY_MS = 3000;
 const GIVE_UP_AFTER_MS = 60_000;
@@ -22,6 +23,7 @@ export function OpenChallengeButton({
   deadlineIso,
   minBondStroops,
   networkPassphrase,
+  bondAsset,
 }: {
   submissionId: string;
   /** ISO timestamp when the challenge window closes; null while still being read from the contract. */
@@ -29,13 +31,15 @@ export function OpenChallengeButton({
   /** The contract's floor for this submission; null if not mirrored yet. */
   minBondStroops: string | null;
   networkPassphrase: string;
+  bondAsset?: BondAsset | "native";
 }) {
   const router = useRouter();
   const { account, connecting, networkOk, problem, login, reportWrongNetwork } = useWallet();
+  const asset = resolveBondAsset(bondAsset);
   // Keep null until the visitor edits the field so a later refresh filling in
   // minBondStroops populates the default without overwriting user input.
-  const [editedBondXlm, setEditedBondXlm] = useState<string | null>(null);
-  const bondXlm = editedBondXlm ?? (minBondStroops ? stroopsToXlm(minBondStroops) : "");
+  const [editedBondInput, setEditedBondInput] = useState<string | null>(null);
+  const bondInput = editedBondInput ?? (minBondStroops ? formatUnits(minBondStroops, asset.decimals) : "");
   const [busy, setBusy] = useState<null | "checking" | "building" | "signing" | "relaying">(null);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -91,13 +95,15 @@ export function OpenChallengeButton({
   async function handleChallenge() {
     if (!account || !networkOk) return;
     setError(null);
-    const bond = xlmToStroops(bondXlm);
+    const bond = parseUnits(bondInput, asset.decimals);
     if (bond === null) {
-      setError("Enter the bond as a positive XLM amount, for example 5 or 5.5.");
+      setError(`Enter the bond as a positive ${asset.symbol} amount, for example 5 or 5.5.`);
       return;
     }
     if (minBondStroops && bond < BigInt(minBondStroops)) {
-      setError(`The bond must be at least ${stroopsToXlm(minBondStroops)} XLM for this submission.`);
+      setError(
+        `The bond must be at least ${formatUnits(minBondStroops, asset.decimals, asset.symbol)} for this submission.`
+      );
       return;
     }
     try {
@@ -119,7 +125,7 @@ export function OpenChallengeButton({
         reportWrongNetwork(err.message);
         return;
       }
-      setError(err instanceof Error ? err.message : "The challenge could not be opened.");
+      setError(err instanceof Error ? mapTrustlineError(err, asset.symbol) : "The challenge could not be opened.");
     } finally {
       setBusy(null);
     }
@@ -181,13 +187,13 @@ export function OpenChallengeButton({
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1.5">
           <label htmlFor="challenge-bond" className="block text-sm text-text-secondary">
-            Your bond (XLM)
+            Your bond ({asset.symbol})
           </label>
           <input
             id="challenge-bond"
             inputMode="decimal"
-            value={bondXlm}
-            onChange={(e) => setEditedBondXlm(e.target.value)}
+            value={bondInput}
+            onChange={(e) => setEditedBondInput(e.target.value)}
             aria-describedby="challenge-bond-help"
             className="w-36 rounded-lg border border-border-strong bg-surface px-3 py-2 font-mono text-sm outline-none focus:border-accent"
           />
@@ -206,9 +212,12 @@ export function OpenChallengeButton({
       </div>
       <p id="challenge-bond-help" className="text-xs text-text-tertiary">
         {minBondStroops
-          ? `Minimum ${stroopsToXlm(minBondStroops)} XLM for this submission, set by the contract.`
+          ? `Minimum ${formatUnits(minBondStroops, asset.decimals, asset.symbol)} for this submission, set by the contract.`
           : "The contract sets a minimum in proportion to the escrow value."}
       </p>
+      {asset.symbol !== "XLM" && (
+        <p className="text-xs text-text-tertiary">{trustlineNote(asset.symbol)}</p>
+      )}
       {displayError && (
         <p role="alert" className="text-sm text-status-slashed">
           {displayError}

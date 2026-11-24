@@ -8,7 +8,7 @@ import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { VerdictBadge } from "../../../components/verdict-badge";
 import { AutoRefresh } from "../../../components/auto-refresh";
-import { stroopsToXlm, truncateMiddle, formatDuration, formatRelativeTime, recordedWindowDeadlineIso } from "../../../lib/format";
+import { truncateMiddle, formatDuration, formatRelativeTime, recordedWindowDeadlineIso, formatUnits, resolveBondAsset } from "../../../lib/format";
 import { TESTNET_EXPLORER_ACCOUNT, TESTNET_EXPLORER_TX } from "../../../lib/config";
 import { ChallengeWindowCountdown } from "../../../components/challenge-window-countdown";
 import { OpenChallengeButton } from "../../../components/open-challenge-button";
@@ -69,14 +69,17 @@ export default async function SubmissionDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const detail = await loadSubmissionDetail(id);
+  const [detail, config] = await Promise.all([
+    loadSubmissionDetail(id),
+    backendGet<GateConfig>("/v1/config"),
+  ]);
   if (!detail) notFound();
   const { submission, replays, spot_checks, challenge } = detail;
+  const asset = resolveBondAsset(config.bond_asset);
 
   const isDraft = submission.chain_submission_id === null;
 
-  const [config, proof, attestation, inputText, functionText, outputText] = await Promise.all([
-    backendGet<GateConfig>("/v1/config"),
+  const [proof, attestation, inputText, functionText, outputText] = await Promise.all([
     settle(`/v1/submissions/${id}/proof`, backendGetOrNull<ProofStatus>(`/v1/submissions/${id}/proof`)),
     settle(
       `/v1/submissions/${id}/attestation`,
@@ -128,7 +131,11 @@ export default async function SubmissionDetailPage({
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="Task type" value={submission.task_type} capitalize />
-        <Stat label="Agent bond" value={`${stroopsToXlm(submission.bond_amount)} XLM`} mono />
+        <Stat
+          label="Agent bond"
+          value={formatUnits(submission.bond_amount, asset.decimals, asset.symbol)}
+          mono
+        />
         <Stat label={isDraft ? "Drafted" : "Submitted"} value={formatRelativeTime(submission.submitted_at)} />
         <Card>
           <CardBody>
@@ -153,7 +160,9 @@ export default async function SubmissionDetailPage({
         </Fact>
         {submission.escrow_value && (
           <Fact label="Declared escrow value">
-            <span className="font-mono">{stroopsToXlm(submission.escrow_value)} XLM</span>
+            <span className="font-mono">
+              {formatUnits(submission.escrow_value, asset.decimals, asset.symbol)}
+            </span>
           </Fact>
         )}
         {submission.chain_tx_hash && submission.chain_submission_id && (
@@ -317,7 +326,10 @@ export default async function SubmissionDetailPage({
                 <a href={TESTNET_EXPLORER_ACCOUNT(challenge.challenger_account)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
                   {truncateMiddle(challenge.challenger_account, 6, 6)}
                 </a>{" "}
-                bonded <span className="font-mono">{stroopsToXlm(challenge.challenger_bond)} XLM</span>{" "}
+                bonded{" "}
+                <span className="font-mono">
+                  {formatUnits(challenge.challenger_bond, asset.decimals, asset.symbol)}
+                </span>{" "}
                 against this submission {formatRelativeTime(challenge.opened_at)}.
               </p>
               <p className="text-text-secondary">
@@ -345,6 +357,7 @@ export default async function SubmissionDetailPage({
               deadlineIso={deadline}
               minBondStroops={submission.min_challenger_bond}
               networkPassphrase={config.network_passphrase}
+              bondAsset={config.bond_asset}
             />
           ) : (
             <p className="text-sm text-text-tertiary">
