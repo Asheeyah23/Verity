@@ -19,15 +19,51 @@ export async function readJsonBody(
 }
 
 /** The signed-in account, read from the session cookie without verifying
- * it — good enough to address a request, never to authorise one (the backend
+ * it — good enough to address a request or for display, never to authorise one (the backend
  * verifies the token itself on every call). */
-export async function sessionAccount(): Promise<string | null> {
+export async function unverifiedSessionAccount(): Promise<string | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
     if (payload.exp && Date.now() >= payload.exp * 1000) return null;
     return typeof payload.sub === "string" ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Kept for backwards compatibility with display-only callers; see unverifiedSessionAccount. */
+export const sessionAccount = unverifiedSessionAccount;
+
+/**
+ * Returns the verified Stellar account from the backend session endpoint.
+ * Returns null if the session cookie is missing, forged, or expired.
+ */
+export async function verifiedSessionAccount(): Promise<string | null> {
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const incoming = await headers();
+  const forwarded = incoming.get("x-forwarded-for") ?? incoming.get("x-real-ip");
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/v1/session`, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(forwarded ? { "x-forwarded-for": forwarded } : {}),
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(BACKEND_ACTION_TIMEOUT_MS),
+    });
+    if (res.status === 401) {
+      store.delete(SESSION_COOKIE);
+      return null;
+    }
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => ({}))) as { account?: string };
+    return typeof data.account === "string" ? data.account : null;
   } catch {
     return null;
   }

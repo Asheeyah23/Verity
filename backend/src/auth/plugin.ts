@@ -47,6 +47,10 @@ export async function authPlugin(app: FastifyInstance) {
       return { error: err instanceof Error ? err.message : "invalid challenge" };
     }
   });
+
+  app.get("/v1/session", { preHandler: requireAuth }, async (req) => {
+    return { account: req.stellarAccount };
+  });
 }
 
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
