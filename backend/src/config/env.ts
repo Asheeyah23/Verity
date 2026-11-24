@@ -110,3 +110,10 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
+
+/**
+ * The SEP-10 endpoint advertised in the SEP-1 file. Session tokens name it as
+ * their issuer, so a token minted by a deployment with a different endpoint is
+ * rejected even if both deployments happen to share JWT_SECRET.
+ */
+export const webAuthEndpoint = `${env.PUBLIC_SCHEME}://${env.WEB_AUTH_DOMAIN}/auth`;

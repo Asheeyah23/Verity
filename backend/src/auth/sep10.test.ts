@@ -14,6 +14,9 @@ const passphrase = "Test SDF Network ; September 2015";
 const homeDomain = "localhost";
 const webAuthDomain = "localhost:3001";
 const jwtSecret = "a".repeat(32);
+// The issuer is the advertised SEP-10 endpoint, built from PUBLIC_SCHEME and
+// WEB_AUTH_DOMAIN (PUBLIC_SCHEME defaults to http).
+const issuer = `http://${webAuthDomain}/auth`;
 
 Object.assign(process.env, {
   SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org",
@@ -95,17 +98,30 @@ test("SEP-10 rejects malformed challenge XDR", () => {
 });
 
 test("JWT round-trips the account subject with a one-hour lifetime", () => {
-  const payload = verifyJwt(issueJwt(client.publicKey())) as {
+  const token = issueJwt(client.publicKey());
+  assert.deepEqual(verifyJwt(token), { sub: client.publicKey() });
+  const payload = jwt.decode(token) as {
     sub: string;
     iat: number;
     exp: number;
+    iss: string;
   };
   assert.equal(payload.sub, client.publicKey());
+  assert.equal(payload.iss, issuer);
   assert.equal(payload.exp - payload.iat, 3600);
 });
 
+test("JWT tokens are signed with HS256", () => {
+  const decoded = jwt.decode(issueJwt(client.publicKey()), { complete: true });
+  assert.equal(decoded?.header.alg, "HS256");
+});
+
 test("JWT verification rejects an already-expired signed token", () => {
-  const expired = jwt.sign({ sub: client.publicKey() }, jwtSecret, { expiresIn: -10 });
+  const expired = jwt.sign({ sub: client.publicKey() }, jwtSecret, {
+    algorithm: "HS256",
+    issuer,
+    expiresIn: -10,
+  });
   assert.throws(() => verifyJwt(expired), /jwt expired/);
 });
 
@@ -126,7 +142,36 @@ test("JWT verification rejects a token signed with a different secret", () => {
   const foreign = jwt.sign(
     { sub: client.publicKey() },
     "b".repeat(32),
-    { expiresIn: "1h" },
+    { algorithm: "HS256", issuer, expiresIn: "1h" },
   );
   assert.throws(() => verifyJwt(foreign), /invalid signature/);
+});
+
+test("JWT verification rejects a token issued by another deployment", () => {
+  const foreign = jwt.sign(
+    { sub: client.publicKey() },
+    jwtSecret,
+    { algorithm: "HS256", issuer: "https://other.example/auth", expiresIn: "1h" },
+  );
+  assert.throws(() => verifyJwt(foreign), /jwt issuer invalid/);
+});
+
+test("JWT verification rejects an algorithm other than HS256", () => {
+  const hs512 = jwt.sign(
+    { sub: client.publicKey() },
+    jwtSecret,
+    { algorithm: "HS512", issuer, expiresIn: "1h" },
+  );
+  assert.throws(() => verifyJwt(hs512), /invalid algorithm/);
+});
+
+test("JWT verification rejects a subject that is not a G-address", () => {
+  for (const sub of ["not-an-account", server.secret()]) {
+    const token = jwt.sign({ sub }, jwtSecret, {
+      algorithm: "HS256",
+      issuer,
+      expiresIn: "1h",
+    });
+    assert.throws(() => verifyJwt(token), /JWT subject is not a Stellar account/);
+  }
 });

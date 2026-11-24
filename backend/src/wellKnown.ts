@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { env } from "./config/env.js";
+import { env, webAuthEndpoint } from "./config/env.js";
 import { sep10SigningKey } from "./auth/sep10.js";
 
 /**
@@ -14,7 +14,7 @@ export async function wellKnownPlugin(app: FastifyInstance) {
     reply.header("Access-Control-Allow-Origin", "*");
     return [
       `NETWORK_PASSPHRASE="${env.NETWORK_PASSPHRASE}"`,
-      `WEB_AUTH_ENDPOINT="${env.PUBLIC_SCHEME}://${env.WEB_AUTH_DOMAIN}/auth"`,
+      `WEB_AUTH_ENDPOINT="${webAuthEndpoint}"`,
       `SIGNING_KEY="${sep10SigningKey}"`,
     ].join("\n");
   });
