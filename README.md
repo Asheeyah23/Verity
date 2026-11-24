@@ -206,13 +206,19 @@ Deterministic tasks run in a sandboxed JavaScript runtime:
 5. **Execution limits.**
    - Memory: 64 MiB (`64 * 1024 * 1024` bytes).
    - Stack: 128 KiB (`128 * 1024` bytes).
-   - Computation: 1000 interrupt checks (ticks). This provides a computation budget
-     of a few seconds of busy loops; loops that exceed this fail with `computation budget exceeded`.
+   - Computation: 25,000,000 WebAssembly fuel units enforced by the fuel-instrumented
+     QuickJS WASM build (1 unit per WASM function entry and loop back-edge, plus 1 unit
+     per 16 bytes for bulk memory operations). This meters JavaScript bytecode, native
+     builtins (such as `Array.prototype.indexOf`, `join`, regexes, and typed-array
+     fills), JSON parsing/serialization, and error inspection identically on every
+     re-executor. Functions that exceed the fuel budget fail with
+     `computation budget exceeded`, which counts as a mismatch.
    - Output size: serialized output can be at most 1,000,000 bytes.
-   - Wall-clock timeout: 20 s host kill switch. This is a host-level safety timeout
-     rather than an engine limit; if triggered, the re-executor considers its host
-     overloaded, casts no vote, and retries later (`ReplayInfrastructureError`). It does
-     not count as a mismatch against the submission.
+   - Wall-clock timeout: 20 s host safety-net kill switch. The fuel budget above is sized
+     to finish well inside this window even on slow hosts; the wall-clock timeout only
+     trips if a host itself is genuinely broken or severely overloaded. If triggered,
+     the re-executor casts no vote and retries later (`ReplayInfrastructureError`). It
+     does not count as a mismatch against the submission.
 6. **Failure handling.** If the function throws an exception or exceeds an engine limit
    (memory, stack, computation budget, or output size), the re-executor produces a
    32-zero-byte output hash, which never matches a legitimate claimed output hash and
@@ -693,9 +699,12 @@ full tally.
   captured at no cost. Deployments here run with `reexecutor_allowlist` on:
   the admin approves which staked accounts may vote.
 - **Sandbox limits.** Replay limits and constraints are detailed in
-  [Writing replayable work](#writing-replayable-work). Exceeding an engine
-  limit or throwing is a mismatch. A function that stalls a re-executor's host
-  without exceeding an engine limit gets no vote from it.
+  [Writing replayable work](#writing-replayable-work). Computation is metered
+  deterministically at the WebAssembly level (covering both JS bytecode and
+  native builtins), so exceeding an engine limit or throwing produces a
+  mismatch vote on every re-executor. The 20 s wall-clock kill switch remains
+  only as a safety net for a genuinely broken or overloaded host (which casts
+  no vote and retries).
 - **Assignment** is deterministic and auditable but uniform, not
   stake-weighted. It only picks re-executors whose worker is online, and asks
   another when one goes quiet.

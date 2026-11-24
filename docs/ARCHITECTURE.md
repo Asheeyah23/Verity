@@ -152,9 +152,10 @@ Each agent holds one staked account's secret key and loops:
    what marks the worker online; only online workers are assigned.
 2. Fetch the declared artifacts by content hash.
 3. **Deterministic tasks:** `sandbox/runner.ts` runs the function in
-   `quickjs-emscripten` (WebAssembly) inside a worker thread with fixed
-   memory, stack and tick limits, no clock and no randomness. Exceeding a
-   limit is a mismatch, identically on every host.
+   fuel-instrumented `quickjs-emscripten` (WebAssembly) inside a worker thread
+   with fixed memory, stack and WebAssembly fuel limits, no clock and no
+   randomness. Exceeding a limit — in bytecode or native builtins — is a
+   mismatch, identically on every host.
 4. **Retrieval tasks:** `sandbox/retrieval.ts` re-fetches the declared URL
    with a private-address guard, retrying for a bounded time before concluding
    the target is at fault.
