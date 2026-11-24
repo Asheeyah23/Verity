@@ -35,11 +35,11 @@ function utf8ByteLength(text: string): number {
 
 const formatKb = (bytes: number) => `${(bytes / 1000).toFixed(1)} KB`;
 
-function checkArtifactSize(name: string, text: string) {
+function checkArtifactSize(name: string, text: string, maxBytes: number = MAX_UPLOAD_ARTIFACT_BYTES) {
   const bytes = utf8ByteLength(text);
-  if (bytes > MAX_UPLOAD_ARTIFACT_BYTES) {
+  if (bytes > maxBytes) {
     throw new Error(
-      `The ${name} is ${formatKb(bytes)}. The largest artifact the dashboard can upload is about ${formatKb(MAX_UPLOAD_ARTIFACT_BYTES)}.`
+      `The ${name} is ${formatKb(bytes)}. The largest artifact the dashboard can upload is about ${formatKb(maxBytes)}.`
     );
   }
 }
@@ -57,6 +57,11 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
   // One key for this form: retrying after a declined signature reuses the
   // same draft instead of leaving a new unsigned one behind each time.
   const idempotencyKey = useRef<string | null>(null);
+
+  const maxArtifactBytes = Math.min(
+    config.artifact_max_bytes ?? MAX_UPLOAD_ARTIFACT_BYTES,
+    MAX_UPLOAD_ARTIFACT_BYTES
+  );
 
   const [escrowRef, setEscrowRef] = useState("");
   const [taskType, setTaskType] = useState<TaskType>("deterministic");
@@ -121,9 +126,9 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
     const output = canonicalJson(parseJsonOrText(outputContent));
     // Checked here, before anything is uploaded, so an oversize artifact is
     // named instead of failing the upload with a bare "Request body is too large".
-    checkArtifactSize("input", input);
-    checkArtifactSize("claimed output", output);
-    if (taskType === "deterministic") checkArtifactSize("function", functionContent);
+    checkArtifactSize("input", input, maxArtifactBytes);
+    checkArtifactSize("claimed output", output, maxArtifactBytes);
+    if (taskType === "deterministic") checkArtifactSize("function", functionContent, maxArtifactBytes);
     return { input, output };
   }
 
@@ -290,8 +295,8 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
             label={taskType === "retrieval" ? "Request spec (JSON)" : "Input (JSON)"}
             helper={
               taskType === "retrieval"
-                ? "The public URL you fetched, plus an optional JSON pointer to the value you extracted. A sampled re-executor re-fetches it."
-                : "Passed to your function as `input`."
+                ? `The public URL you fetched, plus an optional JSON pointer to the value you extracted (up to ${formatKb(maxArtifactBytes)}). A sampled re-executor re-fetches it.`
+                : `Passed to your function as \`input\` (up to ${formatKb(maxArtifactBytes)}).`
             }
           >
             {(control) => (
@@ -313,7 +318,7 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
           {taskType === "deterministic" && (
             <Field
               label="Function body (JavaScript)"
-              helper="The body of a pure function of `input` that returns the result. Re-executors run this exact artifact in a WebAssembly sandbox with no network, files or clock: `Date` and `Math.random` do not exist there, and compute and memory are capped. A function that throws or exceeds the limits counts as a mismatch."
+              helper={`The body of a pure function of \`input\` that returns the result (up to ${formatKb(maxArtifactBytes)}). Re-executors run this exact artifact in a WebAssembly sandbox with no network, files or clock: \`Date\` and \`Math.random\` do not exist there, and compute and memory are capped. A function that throws or exceeds the limits counts as a mismatch.`}
             >
               {(control) => (
                 <textarea
@@ -330,7 +335,7 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
           )}
           <Field
             label="Claimed output"
-            helper="JSON or plain text. Normalised to canonical JSON before hashing, so key order and whitespace do not matter."
+            helper={`JSON or plain text (up to ${formatKb(maxArtifactBytes)}). Normalised to canonical JSON before hashing, so key order and whitespace do not matter.`}
           >
             {(control) => (
               <textarea

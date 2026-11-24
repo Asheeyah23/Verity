@@ -165,6 +165,7 @@ export interface GateConfig {
   reexecutor_slash_bps: number;
   reexecutor_allowlist: boolean;
   reexecutor_liveness_s: number;
+  artifact_max_bytes?: number;
 }
 
 export interface Attestation {

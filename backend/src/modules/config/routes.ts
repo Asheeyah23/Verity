@@ -25,6 +25,7 @@ export async function configRoutes(app: FastifyInstance) {
       reexecutor_slash_bps: cfg.reexecutor_slash_bps,
       reexecutor_allowlist: cfg.reexecutor_allowlist,
       reexecutor_liveness_s: env.REEXECUTOR_LIVENESS_S,
+      artifact_max_bytes: env.ARTIFACT_MAX_BYTES,
     };
   });
 }
