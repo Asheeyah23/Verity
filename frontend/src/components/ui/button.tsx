@@ -1,5 +1,5 @@
 import { cn } from "../../lib/utils";
-import type { ButtonHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes } from "react";
 
 /** Shape lock for this project: buttons = rounded-md, cards/panels/inputs =
  * rounded-lg, badges/pills = rounded-full. Followed everywhere, not mixed. */
@@ -11,7 +11,7 @@ const variants: Record<Variant, string> = {
   secondary:
     "bg-surface-raised text-text-primary border border-border-strong hover:bg-surface-hover disabled:opacity-40",
   ghost: "text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-40",
-  danger: "bg-status-slashed text-white hover:opacity-90 disabled:opacity-40",
+  danger: "bg-danger-fill text-white hover:opacity-90 disabled:opacity-40",
 };
 
 export function buttonClasses(variant: Variant = "primary", className?: string) {
@@ -25,10 +25,9 @@ export function buttonClasses(variant: Variant = "primary", className?: string) 
   );
 }
 
-export function Button({
-  variant = "primary",
-  className,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
-  return <button className={buttonClasses(variant, className)} {...props} />;
-}
+export const Button = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }
+>(function Button({ variant = "primary", className, ...props }, ref) {
+  return <button ref={ref} className={buttonClasses(variant, className)} {...props} />;
+});
