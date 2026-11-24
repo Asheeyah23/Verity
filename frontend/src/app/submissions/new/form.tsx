@@ -6,8 +6,7 @@ import { useWallet } from "../../../components/wallet-provider";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { uploadArtifact, createSubmission, relaySubmission } from "../../../lib/client-api";
-import { signXdr } from "../../../lib/wallet";
-import { NETWORK_PASSPHRASE } from "../../../lib/config";
+import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
 import { canonicalJson, parseJsonOrText } from "../../../lib/canonical";
 import { bpsToPercent, formatDuration, stroopsToXlm, xlmToStroops } from "../../../lib/format";
 import { validateRetrievalSpec } from "../../../lib/retrieval-spec";
@@ -45,7 +44,7 @@ function checkArtifactSize(name: string, text: string) {
   }
 }
 
-type Step = "idle" | "uploading" | "building" | "signing" | "relaying" | "done" | "error";
+type Step = "idle" | "checking" | "uploading" | "building" | "signing" | "relaying" | "done" | "error";
 
 // The reference is free text that is hashed on-chain and shown in lists, so it is capped for sanity; keep it in line with any backend limit.
 const ESCROW_REF_MAX_LENGTH = 128;
@@ -54,7 +53,7 @@ const ESCROW_REF_MAX_LENGTH = 128;
  * window shown here are the ones EscrowGate will actually apply. */
 export function NewSubmissionForm({ config }: { config: GateConfig }) {
   const router = useRouter();
-  const { account, connecting, login } = useWallet();
+  const { account, connecting, networkOk, problem, login, reportWrongNetwork } = useWallet();
   // One key for this form: retrying after a declined signature reuses the
   // same draft instead of leaving a new unsigned one behind each time.
   const idempotencyKey = useRef<string | null>(null);
@@ -129,7 +128,7 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
   }
 
   async function handleSubmit() {
-    if (!account) return;
+    if (!account || !networkOk) return;
     setError(null);
     try {
       if (!escrowRefTrimmed) {
@@ -137,6 +136,8 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
       }
       const amounts = prepareAmounts();
       const artifacts = prepareArtifacts();
+      setStep("checking");
+      await assertWalletNetwork(config.network_passphrase);
       setStep("uploading");
       const input = await uploadArtifact(textToBase64(artifacts.input), "application/json");
       const output = await uploadArtifact(textToBase64(artifacts.output), "application/json");
@@ -146,7 +147,7 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
           : null;
 
       setStep("building");
-      const { submission, unsigned_transaction_xdr, network_passphrase } = await createSubmission({
+      const { submission, unsigned_transaction_xdr } = await createSubmission({
         escrow_ref: escrowRefTrimmed,
         task_type: taskType,
         input_hash: input.content_hash,
@@ -167,7 +168,7 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
 
       setStep("signing");
       const signed = await signXdr(unsigned_transaction_xdr, {
-        networkPassphrase: network_passphrase || NETWORK_PASSPHRASE,
+        networkPassphrase: config.network_passphrase,
         address: account,
       });
 
@@ -176,12 +177,23 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
       setStep("done");
       router.push(`/submissions/${submission.id}`);
     } catch (err) {
+      if (err instanceof WalletError && err.code === "wrong-network") {
+        reportWrongNetwork(err.message);
+        setStep("idle");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Submission failed.");
       setStep("error");
     }
   }
 
   const busy = step !== "idle" && step !== "error";
+  const wrongNetworkNotice = !networkOk
+    ? problem?.code === "wrong-network"
+      ? problem.message
+      : wrongNetworkMessage()
+    : null;
+  const displayError = wrongNetworkNotice ?? error;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -335,25 +347,27 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
         </CardBody>
       </Card>
 
-      {error && (
+      {displayError && (
         <p role="alert" className="text-sm text-status-slashed">
-          {error}
+          {displayError}
         </p>
       )}
 
       {account ? (
-        <Button onClick={handleSubmit} disabled={busy || !escrowRefTrimmed || !inputContent || !outputContent}>
-          {step === "uploading"
-            ? "Uploading artifacts..."
-            : step === "building"
-              ? "Building transaction..."
-              : step === "signing"
-                ? "Awaiting signature in Freighter..."
-                : step === "relaying"
-                  ? "Submitting to testnet..."
-                  : step === "done"
-                    ? "Confirmed. Opening the submission..."
-                    : "Submit for verification"}
+        <Button onClick={handleSubmit} disabled={busy || !networkOk || !escrowRefTrimmed || !inputContent || !outputContent}>
+          {step === "checking"
+            ? "Checking Freighter..."
+            : step === "uploading"
+              ? "Uploading artifacts..."
+              : step === "building"
+                ? "Building transaction..."
+                : step === "signing"
+                  ? "Awaiting signature in Freighter..."
+                  : step === "relaying"
+                    ? "Submitting to testnet..."
+                    : step === "done"
+                      ? "Confirmed. Opening the submission..."
+                      : "Submit for verification"}
         </Button>
       ) : (
         <Button onClick={login} disabled={connecting}>

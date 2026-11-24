@@ -6,17 +6,17 @@ import { useWallet } from "../../../components/wallet-provider";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button, buttonClasses } from "../../../components/ui/button";
 import { registerReexecutor, relayReexecutorStake } from "../../../lib/client-api";
-import { signXdr } from "../../../lib/wallet";
-import { NETWORK_PASSPHRASE, TESTNET_EXPLORER_TX } from "../../../lib/config";
+import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
+import { TESTNET_EXPLORER_TX } from "../../../lib/config";
 import { stroopsToXlm, xlmToStroops } from "../../../lib/format";
 import type { GateConfig } from "../../../lib/types";
 
-type Status = "idle" | "building" | "signing" | "relaying" | "done" | "error";
+type Status = "idle" | "checking" | "building" | "signing" | "relaying" | "done" | "error";
 
 /** `config` is the contract's live rule set: the stake floor, the slash
  * rate, and whether voting needs the admin's approval. */
 export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
-  const { account, connecting, login } = useWallet();
+  const { account, connecting, networkOk, problem, login, reportWrongNetwork } = useWallet();
   // Twice the floor by default: a single slash then leaves the account active.
   const [stakeXlm, setStakeXlm] = useState(stroopsToXlm((BigInt(config.min_stake_floor) * BigInt(2)).toString()));
   const [status, setStatus] = useState<Status>("idle");
@@ -27,9 +27,15 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
   const floorXlm = stroopsToXlm(config.min_stake_floor);
   const stake = xlmToStroops(stakeXlm);
   const belowFloor = stake !== null && stake < floor;
+  const wrongNetworkNotice = !networkOk
+    ? problem?.code === "wrong-network"
+      ? problem.message
+      : wrongNetworkMessage()
+    : null;
+  const displayError = wrongNetworkNotice ?? error;
 
   async function handleRegister() {
-    if (!account) return;
+    if (!account || !networkOk) return;
     setError(null);
     if (stake === null) {
       setError("Enter the stake as a positive XLM amount, for example 1000.");
@@ -37,12 +43,15 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
       return;
     }
     try {
+      setStatus("checking");
+      await assertWalletNetwork(config.network_passphrase);
+
       setStatus("building");
       const { reexecutor, unsigned_transaction_xdr } = await registerReexecutor(stake.toString());
 
       setStatus("signing");
       const signed = await signXdr(unsigned_transaction_xdr, {
-        networkPassphrase: NETWORK_PASSPHRASE,
+        networkPassphrase: config.network_passphrase,
         address: account,
       });
 
@@ -51,6 +60,11 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
       setResult({ id: reexecutor.id, txHash: tx_hash, stake });
       setStatus("done");
     } catch (err) {
+      if (err instanceof WalletError && err.code === "wrong-network") {
+        reportWrongNetwork(err.message);
+        setStatus("idle");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Registration failed.");
       setStatus("error");
     }
@@ -154,21 +168,23 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
                 </p>
               </div>
 
-              {error && (
+              {displayError && (
                 <p role="alert" className="text-sm text-status-slashed">
-                  {error}
+                  {displayError}
                 </p>
               )}
 
               {account ? (
-                <Button onClick={handleRegister} disabled={status !== "idle" && status !== "error"}>
-                  {status === "building"
-                    ? "Building transaction..."
-                    : status === "signing"
-                      ? "Awaiting signature in Freighter..."
-                      : status === "relaying"
-                        ? "Submitting to testnet..."
-                        : "Stake and register"}
+                <Button onClick={handleRegister} disabled={(status !== "idle" && status !== "error") || !networkOk}>
+                  {status === "checking"
+                    ? "Checking Freighter..."
+                    : status === "building"
+                      ? "Building transaction..."
+                      : status === "signing"
+                        ? "Awaiting signature in Freighter..."
+                        : status === "relaying"
+                          ? "Submitting to testnet..."
+                          : "Stake and register"}
                 </Button>
               ) : (
                 <Button onClick={login} disabled={connecting}>

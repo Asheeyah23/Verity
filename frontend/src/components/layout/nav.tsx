@@ -21,8 +21,9 @@ const LINKS = [
 
 export function Nav() {
   const pathname = usePathname();
-  const { account, connecting, problem, login, logout, dismissProblem } = useWallet();
+  const { account, connecting, networkOk, problem, login, logout, dismissProblem } = useWallet();
   const [menuOpen, setMenuOpen] = useState(false);
+  const persistentProblem = problem?.code === "wrong-network" && !networkOk;
 
   return (
     <header className="sticky top-0 z-20 border-b border-border-subtle bg-surface/90 backdrop-blur">
@@ -113,7 +114,15 @@ export function Nav() {
       )}
 
       {problem && (
-        <div role="alert" className="border-t border-border-subtle bg-surface-raised">
+        <div
+          role="alert"
+          className={cn(
+            "border-t",
+            problem.code === "wrong-network"
+              ? "border-status-pending/40 bg-status-pending/15"
+              : "border-border-subtle bg-surface-raised"
+          )}
+        >
           <div className="mx-auto flex max-w-7xl items-start justify-between gap-4 px-4 py-3 text-sm sm:px-6 lg:px-8">
             <p className="text-text-primary">
               {problem.message}{" "}
@@ -128,14 +137,16 @@ export function Nav() {
                 </a>
               )}
             </p>
-            <button
-              type="button"
-              onClick={dismissProblem}
-              aria-label="Dismiss"
-              className="shrink-0 rounded-md p-1 text-text-tertiary transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-            >
-              <X size={16} />
-            </button>
+            {!persistentProblem && (
+              <button
+                type="button"
+                onClick={dismissProblem}
+                aria-label="Dismiss"
+                className="shrink-0 rounded-md p-1 text-text-tertiary transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
         </div>
       )}

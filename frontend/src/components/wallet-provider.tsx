@@ -2,10 +2,17 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { WatchWalletChanges } from "@stellar/freighter-api";
-import { connectWallet, signXdr, WalletError, type WalletErrorCode } from "../lib/wallet";
+import {
+  connectWallet,
+  evaluateWalletChange,
+  signXdr,
+  WalletError,
+  type WalletErrorCode,
+} from "../lib/wallet";
 import {
   fetchChallenge,
   exchangeChallenge,
+  getConfig,
   getSession,
   logout as apiLogout,
   SESSION_EXPIRED_EVENT,
@@ -21,10 +28,13 @@ export interface WalletProblem {
 interface WalletState {
   account: string | null;
   connecting: boolean;
+  networkOk: boolean;
+  networkPassphrase: string;
   problem: WalletProblem | null;
   login: () => Promise<void>;
   logout: () => Promise<void>;
   dismissProblem: () => void;
+  reportWrongNetwork: (message: string) => void;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -32,12 +42,19 @@ const WalletContext = createContext<WalletState | null>(null);
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [networkOk, setNetworkOk] = useState(true);
+  const [networkPassphrase, setNetworkPassphrase] = useState(NETWORK_PASSPHRASE);
   const [problem, setProblem] = useState<WalletProblem | null>(null);
 
   useEffect(() => {
     getSession()
       .then((s) => setAccount(s.account))
       .catch(() => setAccount(null));
+    getConfig()
+      .then((cfg) => {
+        if (cfg.network_passphrase) setNetworkPassphrase(cfg.network_passphrase);
+      })
+      .catch(() => {});
   }, []);
 
   // The session lives an hour. When the server stops recognising it, show
@@ -45,45 +62,64 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const onExpired = () => {
       setAccount(null);
+      setNetworkOk(true);
       setProblem({ message: "Your session has expired. Connect your wallet again to continue.", code: null });
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, []);
 
-  // The session is for one account. If Freighter's active account changes,
-  // anything signed next would be for somebody else, so sign out and say why.
+  // The session is for one account on one network. If Freighter switches
+  // accounts, sign out; if it switches networks, keep the session and block
+  // signing until it returns to the deployment's network.
   useEffect(() => {
     if (!account) return;
     const watcher = new WatchWalletChanges(3000);
-    watcher.watch(({ address }) => {
-      if (address && address !== account) {
+    watcher.watch(({ address, network, networkPassphrase: walletPassphrase }) => {
+      const effect = evaluateWalletChange(
+        { address, network, networkPassphrase: walletPassphrase },
+        account,
+        networkPassphrase
+      );
+      if (effect.kind === "account-switched") {
         // The wallet is a different account now, so the UI must disconnect
         // either way; if deleting the cookie fails, the old session cookie
         // may simply remain until it expires. The "Freighter switched..."
         // message below stays the one the user sees.
         apiLogout().catch(() => {});
         setAccount(null);
+        setNetworkOk(true);
         setProblem({
           message: "Freighter switched to a different account. Connect again to continue as that account.",
           code: null,
         });
+        return;
+      }
+      if (effect.kind === "wrong-network") {
+        setNetworkOk(false);
+        setProblem({ message: effect.message, code: "wrong-network" });
+        return;
+      }
+      if (effect.kind === "network-ok") {
+        setNetworkOk(true);
+        setProblem((current) => (current?.code === "wrong-network" ? null : current));
       }
     });
     return () => watcher.stop();
-  }, [account]);
+  }, [account, networkPassphrase]);
 
   const login = useCallback(async () => {
     setConnecting(true);
     setProblem(null);
     try {
-      const address = await connectWallet(NETWORK_PASSPHRASE);
+      const address = await connectWallet(networkPassphrase);
       const { transaction, network_passphrase } = await fetchChallenge(address);
       const signed = await signXdr(transaction, {
-        networkPassphrase: network_passphrase || NETWORK_PASSPHRASE,
+        networkPassphrase: network_passphrase || networkPassphrase,
         address,
       });
       const { account: authedAccount } = await exchangeChallenge(signed);
+      setNetworkOk(true);
       setAccount(authedAccount);
     } catch (err) {
       setProblem({
@@ -93,7 +129,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [networkPassphrase]);
 
   const logout = useCallback(async () => {
     setProblem(null);
@@ -109,13 +145,33 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       });
       return;
     }
+    setNetworkOk(true);
     setAccount(null);
   }, []);
 
-  const dismissProblem = useCallback(() => setProblem(null), []);
+  const dismissProblem = useCallback(() => {
+    setProblem((current) => (current?.code === "wrong-network" && !networkOk ? current : null));
+  }, [networkOk]);
+
+  const reportWrongNetwork = useCallback((message: string) => {
+    setNetworkOk(false);
+    setProblem({ message, code: "wrong-network" });
+  }, []);
 
   return (
-    <WalletContext.Provider value={{ account, connecting, problem, login, logout, dismissProblem }}>
+    <WalletContext.Provider
+      value={{
+        account,
+        connecting,
+        networkOk,
+        networkPassphrase,
+        problem,
+        login,
+        logout,
+        dismissProblem,
+        reportWrongNetwork,
+      }}
+    >
       {children}
     </WalletContext.Provider>
   );

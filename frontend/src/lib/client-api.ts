@@ -1,4 +1,5 @@
 import { describeContractError } from "./format";
+import type { GateConfig } from "./types";
 
 /** Fired when the server no longer recognises the session, so the wallet
  * provider can show the account as disconnected instead of letting every
@@ -56,6 +57,11 @@ export async function logout() {
 export async function getSession() {
   const res = await fetch("/api/session", { cache: "no-store" });
   return json<{ account: string | null }>(res);
+}
+
+export async function getConfig() {
+  const res = await fetch("/api/config", { cache: "no-store" });
+  return json<GateConfig>(res);
 }
 
 export interface CreateSubmissionInput {

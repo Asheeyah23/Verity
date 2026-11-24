@@ -98,6 +98,7 @@ export default async function ReexecutorDetailPage({
           account={reexecutor.stellar_account}
           stakeStroops={reexecutor.stake_amount}
           floorStroops={config.min_stake_floor}
+          networkPassphrase={config.network_passphrase}
         />
       </WithdrawPanel>
 
