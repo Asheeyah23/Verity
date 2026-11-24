@@ -97,6 +97,9 @@ export const envSchema = z.object({
   // Unsigned submission drafts older than this are deleted. Must outlast the
   // validity of the transaction built for them.
   DRAFT_TTL_S: z.coerce.number().int().positive().default(3600),
+  // Validity and confirmation timeout in seconds for keeper transactions
+  // (finalize, resolve_challenge, release_attestation_lock).
+  KEEPER_TX_TIMEOUT_S: z.coerce.number().int().min(10).default(30),
 });
 
 const parsed = envSchema.safeParse(process.env);
