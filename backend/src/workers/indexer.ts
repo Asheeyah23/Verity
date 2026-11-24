@@ -1,5 +1,6 @@
 import { scValToNative } from "@stellar/stellar-sdk";
 import { sql } from "kysely";
+import type { TaskType } from "@verity/db";
 import { db } from "../db.js";
 import { server } from "../chain/rpc.js";
 import { env } from "../config/env.js";
@@ -174,27 +175,7 @@ async function handleEvent(
           .executeTakeFirst();
       }
       if (row) {
-        const sub = await readSubmission(chainSubmissionId);
-        await db
-          .updateTable("submission")
-          .set({
-            chain_submission_id: chainSubmissionId,
-            chain_tx_hash: txHash,
-            escrow_value: v.escrow_value.toString(),
-            min_challenger_bond: sub ? minChallengerBond(sub).toString() : row.min_challenger_bond,
-            challenge_window_s: sub ? Number(sub.challenge_window_s) : row.challenge_window_s,
-            // The challenge window runs on ledger time, not on when our row
-            // was first drafted — align so the countdown and sweep are exact.
-            submitted_at: sub ? new Date(Number(sub.submitted_at) * 1000) : undefined,
-            updated_at: new Date(),
-          })
-          .where("id", "=", row.id)
-          .execute();
-        await assignReplayJobs({
-          submissionId: row.id,
-          chainSubmissionId,
-          taskType: row.task_type,
-        });
+        await adoptSubmission(row, chainSubmissionId, txHash, v.escrow_value);
       }
       break;
     }
@@ -505,6 +486,52 @@ async function handleEvent(
 function challengeResolutionMethod(v: unknown): "reexecution_consensus" | "zk_proof" | null {
   const method = fromChainResolutionMethod(v);
   return method === "reexecution_consensus" || method === "zk_proof" ? method : null;
+}
+
+export interface AdoptableSubmission {
+  id: string;
+  task_type: TaskType;
+  escrow_value: string | null;
+  min_challenger_bond: string | null;
+  challenge_window_s: number;
+}
+
+/** Attaches an on-chain submission id to its off-chain draft row, syncs the
+ * chain-authoritative timing and bond fields from the contract, and kicks off
+ * replay assignment. Idempotent: safe if invoked by both the indexer's
+ * submission_created handler and the scheduler's relayed-draft recovery. */
+export async function adoptSubmission(
+  row: AdoptableSubmission,
+  chainSubmissionId: string,
+  txHash: string,
+  escrowValue?: bigint
+): Promise<void> {
+  const sub = await readSubmission(chainSubmissionId);
+  await db
+    .updateTable("submission")
+    .set({
+      chain_submission_id: chainSubmissionId,
+      chain_tx_hash: txHash,
+      escrow_value:
+        escrowValue !== undefined
+          ? escrowValue.toString()
+          : sub
+            ? sub.escrow_value.toString()
+            : row.escrow_value,
+      min_challenger_bond: sub ? minChallengerBond(sub).toString() : row.min_challenger_bond,
+      challenge_window_s: sub ? Number(sub.challenge_window_s) : row.challenge_window_s,
+      // The challenge window runs on ledger time, not on when our row
+      // was first drafted — align so the countdown and sweep are exact.
+      submitted_at: sub ? new Date(Number(sub.submitted_at) * 1000) : undefined,
+      updated_at: new Date(),
+    })
+    .where("id", "=", row.id)
+    .execute();
+  await assignReplayJobs({
+    submissionId: row.id,
+    chainSubmissionId,
+    taskType: row.task_type,
+  });
 }
 
 /** Mirrors invariant 1 off-chain: as soon as a fresh replay tally implies a

@@ -1,6 +1,8 @@
+import { scValToNative } from "@stellar/stellar-sdk";
 import { sql } from "kysely";
 import { db } from "../db.js";
 import { env } from "../config/env.js";
+import { server } from "../chain/rpc.js";
 import {
   consensusOutcome,
   finalizeOnChain,
@@ -12,7 +14,9 @@ import { fromChainVerdict } from "../chain/mappers.js";
 import { recordTerminalVerdict } from "../modules/submissions/verdict.js";
 import { exportAttestation } from "../modules/attestations/export.js";
 import { topUpAssignments } from "../modules/reexecutors/assignment.js";
-import { maybeEarlyFinalize } from "./indexer.js";
+import type { ChainTxStatus } from "../modules/submissions/supersede.js";
+import { adoptSubmission, maybeEarlyFinalize } from "./indexer.js";
+import { decideDraftPurge } from "./draft-purge.js";
 
 /** How long settlement waits for the indexer to catch up on a submission's
  * votes before settling with the ones it has. */
@@ -241,22 +245,126 @@ export async function settleOnce(): Promise<number> {
   return settled;
 }
 
-/** POST /v1/submissions stores a draft row before the agent signs. A draft
- * never signed — the wallet prompt was dismissed, the tab closed — is not a
- * submission and is removed once the transaction built for it can no longer
- * land.
+/** How often to repeat the warning for an unresolved relayed draft that is
+ * still being kept while waiting for the indexer or retention window. */
+const KEPT_DRAFT_LOG_INTERVAL_MS = 60 * 60 * 1000;
+const keptRelayedDraftLogAt = new Map<string, number>();
+
+/** POST /v1/submissions stores a draft row before the agent signs.
  *
- * Age is counted from `updated_at`, not `created_at`: a retry of a draft
- * rebuilds the transaction and bumps only `updated_at`, so the clock restarts
- * with each new transaction. Counting from `created_at` could delete a draft
- * minutes after the agent was handed a fresh transaction for it. */
+ * - Unsigned drafts (`relay_started_at is null`) were never broadcast and are
+ *   deleted once `updated_at` is older than `DRAFT_TTL_S`. Age is counted from
+ *   `updated_at`, not `created_at`: a retry of a draft rebuilds the transaction
+ *   and bumps only `updated_at`, so the clock restarts with each new tx.
+ * - Relayed drafts (`relay_started_at is not null`) were broadcast and may have
+ *   landed on-chain even if the relay timed out or the backend went down before
+ *   the indexer processed `submission_created`. Each expired relayed draft is
+ *   checked on-chain first: adopted if SUCCESS, purged if FAILED, and kept
+ *   across the retention window if NOT_FOUND so the indexer can still catch up. */
 export async function purgeDraftsOnce(): Promise<number> {
-  const result = await db
+  const unsigned = await db
     .deleteFrom("submission")
     .where("chain_submission_id", "is", null)
+    .where("relay_started_at", "is", null)
     .where("updated_at", "<", sql<Date>`now() - (${env.DRAFT_TTL_S} || ' seconds')::interval`)
     .executeTakeFirst();
-  return Number(result.numDeletedRows ?? 0);
+  let deleted = Number(unsigned.numDeletedRows ?? 0);
+
+  const relayed = await db
+    .selectFrom("submission")
+    .select([
+      "id",
+      "task_type",
+      "escrow_value",
+      "min_challenger_bond",
+      "challenge_window_s",
+      "chain_tx_hash",
+      "relay_started_at",
+      "updated_at",
+    ])
+    .where("chain_submission_id", "is", null)
+    .where("relay_started_at", "is not", null)
+    .where("updated_at", "<", sql<Date>`now() - (${env.DRAFT_TTL_S} || ' seconds')::interval`)
+    .execute();
+
+  const draftTtlMs = env.DRAFT_TTL_S * 1000;
+  const keptIds = new Set<string>();
+
+  for (const draft of relayed) {
+    try {
+      const now = Date.now();
+      const relayStartedAt = new Date(draft.relay_started_at!);
+      const updatedAt = new Date(draft.updated_at);
+
+      const tx = draft.chain_tx_hash ? await server.getTransaction(draft.chain_tx_hash) : null;
+      const chainStatus: ChainTxStatus = (tx?.status as ChainTxStatus | undefined) ?? "NOT_FOUND";
+      const decision = decideDraftPurge({
+        updatedAt,
+        relayStartedAt,
+        chainStatus,
+        draftTtlMs,
+        now,
+      });
+
+      if (decision === "adopt") {
+        const returnValue = tx && tx.status === "SUCCESS" && tx.returnValue ? scValToNative(tx.returnValue) : null;
+        if (typeof returnValue !== "bigint") {
+          console.error(
+            `[scheduler] relayed draft ${draft.id} (tx ${draft.chain_tx_hash}) succeeded on-chain but returned no u64 submission id; keeping draft for indexer`
+          );
+          keptIds.add(draft.id);
+          continue;
+        }
+        const chainSubmissionId = returnValue.toString();
+        await adoptSubmission(draft, chainSubmissionId, draft.chain_tx_hash!);
+        console.info(
+          `[scheduler] adopted relayed draft ${draft.id} as chain submission #${chainSubmissionId} (tx ${draft.chain_tx_hash})`
+        );
+        continue;
+      }
+
+      if (decision === "keep") {
+        keptIds.add(draft.id);
+        const lastLogged = keptRelayedDraftLogAt.get(draft.id);
+        if (lastLogged === undefined || now - lastLogged >= KEPT_DRAFT_LOG_INTERVAL_MS) {
+          console.warn(
+            `[scheduler] keeping expired relayed draft ${draft.id} (tx ${draft.chain_tx_hash ?? "none"}, relay_started_at=${relayStartedAt.toISOString()}): transaction is ${chainStatus} on RPC`
+          );
+          keptRelayedDraftLogAt.set(draft.id, now);
+        }
+        continue;
+      }
+
+      if (decision === "give_up") {
+        const ageHours = ((now - relayStartedAt.getTime()) / (60 * 60 * 1000)).toFixed(1);
+        console.error(
+          `[scheduler] giving up on relayed draft ${draft.id} (tx ${draft.chain_tx_hash ?? "none"}, relay_started_at=${relayStartedAt.toISOString()}, age=${ageHours}h): transaction still NOT_FOUND past retention window; deleting draft`
+        );
+      }
+
+      // Guard the delete against concurrent adoption by the indexer or a
+      // rebuild of the draft with a new chain_tx_hash via POST /v1/submissions.
+      let del = db
+        .deleteFrom("submission")
+        .where("id", "=", draft.id)
+        .where("chain_submission_id", "is", null)
+        .where("relay_started_at", "is not", null);
+      del = draft.chain_tx_hash
+        ? del.where("chain_tx_hash", "=", draft.chain_tx_hash)
+        : del.where("chain_tx_hash", "is", null);
+      const res = await del.executeTakeFirst();
+      deleted += Number(res.numDeletedRows ?? 0);
+    } catch (err) {
+      keptIds.add(draft.id);
+      console.error(`[scheduler] relayed draft check failed for submission ${draft.id}:`, err);
+    }
+  }
+
+  for (const id of keptRelayedDraftLogAt.keys()) {
+    if (!keptIds.has(id)) keptRelayedDraftLogAt.delete(id);
+  }
+
+  return deleted;
 }
 
 /** The chain is the source of truth and events can be missed (RPC event
