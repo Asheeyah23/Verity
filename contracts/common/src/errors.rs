@@ -35,6 +35,7 @@ pub enum Error {
     NoUnresolvedChallenge = 34,
     ChallengeAlreadyResolved = 35,
     AgentCannotChallenge = 36,
+    ConsensusAlreadyReached = 37,
 
     NotUpheldResolution = 40,
     AlreadySlashed = 41,
