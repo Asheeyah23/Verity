@@ -73,6 +73,8 @@ export function signAttestation(canonical: string): string {
   return Buffer.from(attestationKeypair.sign(Buffer.from(canonical))).toString("base64");
 }
 
+export type ExportAttestationResult = "created" | "exists" | "not_ready";
+
 /**
  * A versioned payload describing a submission's terminal verdict, signed by
  * Verity. Every field is read from the mirrored chain state; the
@@ -81,16 +83,17 @@ export function signAttestation(canonical: string): string {
  *
  * The signature covers the canonical JSON of the payload (keys sorted, no
  * whitespace), so it can be re-derived from the stored JSON and verified.
- * Returns true when this call created the attestation.
+ * Returns "created" if this call created the attestation, "exists" if one already
+ * existed, or "not_ready" if the submission is not terminal or lacks a resolution_method.
  */
-export async function exportAttestation(submissionId: string): Promise<boolean> {
+export async function exportAttestation(submissionId: string): Promise<ExportAttestationResult> {
   const submission = await db
     .selectFrom("submission")
     .selectAll()
     .where("id", "=", submissionId)
     .executeTakeFirstOrThrow();
-  if (!["verified", "slashed", "expired_unverified"].includes(submission.status)) return false;
-  if (!submission.resolution_method) return false; // not mirrored from chain yet; retried at the next settle pass
+  if (!["verified", "slashed", "expired_unverified"].includes(submission.status)) return "not_ready";
+  if (!submission.resolution_method) return "not_ready";
 
   const votes = await db
     .selectFrom("replay")
@@ -118,5 +121,5 @@ export async function exportAttestation(submissionId: string): Promise<boolean> 
     .onConflict((oc) => oc.doNothing())
     .returning("id")
     .executeTakeFirst();
-  return Boolean(inserted);
+  return inserted ? "created" : "exists";
 }

@@ -10,13 +10,34 @@ import {
   releaseAttestationLockOnChain,
   resolveChallengeOnChain,
 } from "../chain/actions.js";
-import { fromChainVerdict } from "../chain/mappers.js";
+import { fromChainVerdict, fromChainResolutionMethod } from "../chain/mappers.js";
 import { recordTerminalVerdict } from "../modules/submissions/verdict.js";
 import { exportAttestation } from "../modules/attestations/export.js";
 import { topUpAssignments } from "../modules/reexecutors/assignment.js";
 import type { ChainTxStatus } from "../modules/submissions/supersede.js";
 import { adoptSubmission, maybeEarlyFinalize } from "./indexer.js";
 import { decideDraftPurge } from "./draft-purge.js";
+
+export interface ReadyToSettleSubmission {
+  status: string;
+  resolution_method: string | null;
+  has_attestation: boolean;
+}
+
+/** A submission may only be marked settled once it has a terminal status,
+ * a known resolution method, and a persisted attestation export. */
+export function isReadyToSettle(sub: ReadyToSettleSubmission): boolean {
+  if (!["verified", "slashed", "expired_unverified"].includes(sub.status)) {
+    return false;
+  }
+  if (!sub.resolution_method) {
+    return false;
+  }
+  if (!sub.has_attestation) {
+    return false;
+  }
+  return true;
+}
 
 /** How long settlement waits for the indexer to catch up on a submission's
  * votes before settling with the ones it has. */
@@ -188,6 +209,20 @@ export async function settleOnce(): Promise<number> {
       // leaving every one of them locked.
       const record = await readSubmission(sub.chain_submission_id!);
       if (!record) continue;
+
+      if (!sub.resolution_method && record.resolution_method) {
+        const resolvedMethod = fromChainResolutionMethod(record.resolution_method);
+        if (resolvedMethod) {
+          await db
+            .updateTable("submission")
+            .set({ resolution_method: resolvedMethod, updated_at: new Date() })
+            .where("id", "=", sub.id)
+            .where("resolution_method", "is", null)
+            .execute();
+          sub.resolution_method = resolvedMethod;
+        }
+      }
+
       const onChainVotes = record.match_votes + record.mismatch_votes;
       if (votes.length < onChainVotes) {
         const waitedS = (Date.now() - new Date(sub.updated_at).getTime()) / 1000;
@@ -230,7 +265,26 @@ export async function settleOnce(): Promise<number> {
 
       // Signed only now, with every indexed vote in hand, so the attestation
       // lists the complete evidence.
-      await exportAttestation(sub.id);
+      const attestationResult = await exportAttestation(sub.id);
+      if (attestationResult === "not_ready") {
+        continue;
+      }
+
+      const attestation = await db
+        .selectFrom("attestation_export")
+        .select(["id"])
+        .where("submission_id", "=", sub.id)
+        .executeTakeFirst();
+
+      if (
+        !isReadyToSettle({
+          status: sub.status,
+          resolution_method: sub.resolution_method,
+          has_attestation: Boolean(attestation),
+        })
+      ) {
+        continue;
+      }
 
       await db
         .updateTable("submission")
