@@ -7,8 +7,8 @@
 #
 # Secrets are read from your stellar-cli identities at start-up and handed to
 # each process through its environment; this script never writes a secret key
-# to disk except the keeper key + JWT secret in backend/.env (gitignored),
-# and only when that file does not exist yet.
+# to disk except the session JWT secret in backend/.env (gitignored), and only
+# when that file does not exist yet.
 #
 #   VERITY_API_PORT (3001)  VERITY_WEB_PORT (3000)  VERITY_PG_PORT (5433)
 #   VERITY_DEPLOYMENT (testnet)                       which deployments/<name>.json
@@ -66,6 +66,10 @@ if ! stellar keys address "$KEEPER" >/dev/null 2>&1; then
   stellar keys generate "$KEEPER" --network "$NETWORK" --fund
 fi
 
+if [ -f backend/.env ] && grep -q '^KEEPER_SECRET_KEY=' backend/.env; then
+  echo "WARN: backend/.env contains KEEPER_SECRET_KEY, which is unused by pnpm dev and can be deleted."
+fi
+
 if [ ! -f backend/.env ]; then
   echo "==> Creating backend/.env (gitignored)"
   (
@@ -81,7 +85,6 @@ WEB_AUTH_DOMAIN=localhost:$API_PORT
 HOME_DOMAIN=localhost:$API_PORT
 PORT=$API_PORT
 ARTIFACT_STORAGE_DIR=./.artifacts
-KEEPER_SECRET_KEY=$(stellar keys secret "$KEEPER")
 JWT_SECRET=$(openssl rand -hex 32)
 ENV
   )

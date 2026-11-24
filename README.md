@@ -124,9 +124,9 @@ longer the recorded account (a replaced keeper is only reported: it holds no
 authority on-chain). Named deployments use `verity-<name>-…` aliases.
 
 Secrets stay in your stellar-cli keystore. `pnpm dev` reads them at start-up
-and passes them to each process through its environment. The only secrets it
-writes to disk are in `backend/.env` (gitignored), and only if that file does
-not exist; it also creates the local database under `.pgdata/`.
+and passes them to each process through its environment. The only secret it
+writes to disk is the session `JWT_SECRET` in `backend/.env` (gitignored), and
+only if that file does not exist yet; it also creates the local database under `.pgdata/`.
 
 ### Prove it works end to end
 
