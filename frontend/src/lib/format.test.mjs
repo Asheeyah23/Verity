@@ -2,9 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   bpsToPercent,
+  challengeWindowState,
   formatCountdown,
   formatDuration,
   formatRelativeTime,
+  recordedWindowDeadlineIso,
   stroopsToXlm,
   truncateMiddle,
   windowDeadlineIso,
@@ -124,6 +126,53 @@ describe("windowDeadlineIso", () => {
       assert.equal(windowDeadlineIso(...args), expected);
     });
   }
+});
+
+describe("recordedWindowDeadlineIso", () => {
+  it("returns null when challenge_window_s is 0 (not yet read from contract)", () => {
+    assert.equal(recordedWindowDeadlineIso("2026-01-01T00:00:00.000Z", 0), null);
+  });
+
+  it("returns null when challenge_window_s is negative", () => {
+    assert.equal(recordedWindowDeadlineIso("2026-01-01T00:00:00.000Z", -10), null);
+  });
+
+  it("returns the computed ISO deadline when challenge_window_s is positive", () => {
+    assert.equal(
+      recordedWindowDeadlineIso("2026-01-01T00:00:00.000Z", 600),
+      "2026-01-01T00:10:00.000Z",
+    );
+  });
+});
+
+describe("challengeWindowState", () => {
+  it("returns unknown when deadlineIso is null", () => {
+    assert.equal(challengeWindowState(null, NOW), "unknown");
+  });
+
+  it("returns open strictly before the deadline", () => {
+    assert.equal(challengeWindowState(at(1), NOW), "open");
+    assert.equal(challengeWindowState(at(10 * MIN), NOW), "open");
+  });
+
+  it("returns closed at or after the deadline", () => {
+    assert.equal(challengeWindowState(at(0), NOW), "closed");
+    assert.equal(challengeWindowState(at(-SEC), NOW), "closed");
+  });
+
+  it("returns closed on an unparseable deadline string", () => {
+    assert.equal(challengeWindowState("not-a-date", NOW), "closed");
+  });
+
+  it("never classifies an unrecorded window (challenge_window_s = 0) as closed", () => {
+    // Draft created 1 hour before NOW with challenge_window_s still 0.
+    const deadline = recordedWindowDeadlineIso(at(-HOUR), 0);
+    assert.equal(deadline, null);
+    assert.equal(challengeWindowState(deadline, NOW), "unknown");
+    // Once the indexer records the on-chain timestamp and window, it becomes open.
+    const recorded = recordedWindowDeadlineIso(at(-MIN), 600);
+    assert.equal(challengeWindowState(recorded, NOW), "open");
+  });
 });
 
 describe("formatCountdown", () => {

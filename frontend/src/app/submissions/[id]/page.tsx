@@ -8,7 +8,7 @@ import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { VerdictBadge } from "../../../components/verdict-badge";
 import { AutoRefresh } from "../../../components/auto-refresh";
-import { stroopsToXlm, truncateMiddle, formatDuration, formatRelativeTime, windowDeadlineIso } from "../../../lib/format";
+import { stroopsToXlm, truncateMiddle, formatDuration, formatRelativeTime, recordedWindowDeadlineIso } from "../../../lib/format";
 import { TESTNET_EXPLORER_ACCOUNT, TESTNET_EXPLORER_TX } from "../../../lib/config";
 import { ChallengeWindowCountdown } from "../../../components/challenge-window-countdown";
 import { OpenChallengeButton } from "../../../components/open-challenge-button";
@@ -89,7 +89,7 @@ export default async function SubmissionDetailPage({
     settle(`artifact ${submission.claimed_output_ref}`, loadArtifact(submission.claimed_output_ref)),
   ]);
 
-  const deadline = windowDeadlineIso(submission.submitted_at, submission.challenge_window_s);
+  const deadline = recordedWindowDeadlineIso(submission.submitted_at, submission.challenge_window_s);
   const open = submission.status === "pending" || submission.status === "disputed";
   // Keep reading until the verdict is in and its settlement has been recorded.
   const live = !isDraft && (open || (submission.chain_submission_id !== null && !submission.settled_at));
@@ -134,6 +134,8 @@ export default async function SubmissionDetailPage({
           <CardBody>
             {isDraft ? (
               <StatBody label="Challenge window" value="Not started" />
+            ) : deadline === null ? (
+              <StatBody label="Challenge window" value="Being read from the contract" />
             ) : submission.status === "pending" && !challenge ? (
               <ChallengeWindowCountdown deadlineIso={deadline} />
             ) : (
