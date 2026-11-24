@@ -1,11 +1,15 @@
 #![cfg(test)]
 
+use crate::events::{ReexecutorRegistered, ReexecutorStakeWithdrawn};
 use crate::{EscrowGate, EscrowGateClient};
 use soroban_sdk::{
-    testutils::{storage::Instance as _, Address as _, Ledger as _},
+    events::Event as _,
+    testutils::{storage::Instance as _, Address as _, Events as _, Ledger as _},
     token, Address, BytesN, Env,
 };
-use verity_common::{ConfigRecord, Error, Resolution, ResolutionMethod, TaskType, Verdict};
+use verity_common::{
+    ConfigRecord, Error, ReexecutorInfo, Resolution, ResolutionMethod, TaskType, Verdict,
+};
 
 const STROOP: i128 = 1;
 const XLM: i128 = 10_000_000 * STROOP;
@@ -799,6 +803,246 @@ fn withdraw_is_blocked_while_attestation_is_open_then_unlocks_after_finalize() {
     w.client.withdraw_stake(&rex1, &(600 * XLM));
     let info = w.client.reexecutor_info(&rex1).unwrap();
     assert_eq!(info.stake_amount, 0);
+}
+
+// ---- register_reexecutor top-ups and withdraw_stake edge cases ----
+
+// ReexecutorInfo has no PartialEq, so a record is compared field by field.
+fn assert_info_eq(actual: &ReexecutorInfo, expected: &ReexecutorInfo) {
+    assert_eq!(actual.stake_amount, expected.stake_amount);
+    assert_eq!(actual.active, expected.active);
+    assert_eq!(actual.joined_at, expected.joined_at);
+    assert_eq!(actual.open_attestations, expected.open_attestations);
+    assert_eq!(actual.approved, expected.approved);
+}
+
+#[test]
+fn register_reexecutor_rejects_a_non_positive_stake() {
+    let e = Env::default();
+    let w = setup(&e);
+    let rex = Address::generate(&e);
+    fund(&w, &rex, 1000 * XLM);
+
+    for amount in [0, -1, -(600 * XLM)] {
+        assert_eq!(
+            w.client.try_register_reexecutor(&rex, &amount),
+            Err(Ok(Error::InvalidAmount)),
+            "{amount}"
+        );
+    }
+    // Nothing moved and nothing was recorded.
+    assert_eq!(w.token.balance(&rex), 1000 * XLM);
+    assert_eq!(w.token.balance(&w.client.address), 0);
+    assert!(w.client.reexecutor_info(&rex).is_none());
+
+    // A registered re-executor is refused the same way and keeps its record.
+    w.client.register_reexecutor(&rex, &(600 * XLM));
+    let before = w.client.reexecutor_info(&rex).unwrap();
+    for amount in [0, -1] {
+        assert_eq!(
+            w.client.try_register_reexecutor(&rex, &amount),
+            Err(Ok(Error::InvalidAmount)),
+            "{amount}"
+        );
+    }
+    assert_info_eq(&w.client.reexecutor_info(&rex).unwrap(), &before);
+    assert_eq!(w.token.balance(&rex), 400 * XLM);
+    assert_eq!(w.token.balance(&w.client.address), 600 * XLM);
+}
+
+#[test]
+fn a_top_up_keeps_joined_at_open_attestations_and_approval() {
+    let e = Env::default();
+    let w = setup(&e);
+    // A start other than zero, so a top-up that reset joined_at would show.
+    e.ledger().set_timestamp(500);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex); // funded with 2000 XLM, stakes 600 XLM
+    w.client.set_reexecutor_approved(&w.admin, &rex, &true);
+    w.client
+        .attest_replay(&rex, &id, &BytesN::from_array(&e, &[3u8; 32]), &true);
+    let before = w.client.reexecutor_info(&rex).unwrap();
+    assert_eq!(before.joined_at, 500);
+    assert_eq!(before.open_attestations, 1);
+    assert!(before.approved);
+
+    e.ledger().set_timestamp(1500);
+    w.client.register_reexecutor(&rex, &(250 * XLM));
+
+    let after = w.client.reexecutor_info(&rex).unwrap();
+    assert_eq!(after.stake_amount, 850 * XLM);
+    assert_eq!(after.joined_at, 500, "a top-up is not a new registration");
+    assert_eq!(after.open_attestations, 1);
+    assert!(after.approved);
+    assert!(after.active);
+    // Only the top-up moved.
+    assert_eq!(w.token.balance(&rex), (2000 - 600 - 250) * XLM);
+}
+
+#[test]
+fn a_top_up_to_the_floor_reactivates_an_inactive_reexecutor() {
+    let e = Env::default();
+    let w = setup(&e); // floor = 500 XLM
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    let vote = BytesN::from_array(&e, &[3u8; 32]);
+
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+    w.client.withdraw_stake(&rex, &(200 * XLM));
+    assert!(!w.client.reexecutor_info(&rex).unwrap().active);
+    assert_eq!(
+        w.client.try_attest_replay(&rex, &id, &vote, &true),
+        Err(Ok(Error::ReexecutorNotActive))
+    );
+
+    // One stroop short of the floor is still inactive.
+    w.client.register_reexecutor(&rex, &(100 * XLM - 1));
+    let short = w.client.reexecutor_info(&rex).unwrap();
+    assert_eq!(short.stake_amount, 500 * XLM - 1);
+    assert!(!short.active);
+
+    // The stroop that reaches the floor brings it back, and it can vote again.
+    w.client.register_reexecutor(&rex, &1);
+    let back = w.client.reexecutor_info(&rex).unwrap();
+    assert_eq!(back.stake_amount, 500 * XLM);
+    assert!(back.active);
+    w.client.attest_replay(&rex, &id, &vote, &true);
+    assert_eq!(w.client.get_submission(&id).unwrap().match_votes, 1);
+}
+
+#[test]
+fn withdraw_stake_rejects_a_non_positive_amount() {
+    let e = Env::default();
+    let w = setup(&e);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+    let before = w.client.reexecutor_info(&rex).unwrap();
+
+    for amount in [0, -1, -(600 * XLM)] {
+        assert_eq!(
+            w.client.try_withdraw_stake(&rex, &amount),
+            Err(Ok(Error::InvalidAmount)),
+            "{amount}"
+        );
+    }
+    assert_info_eq(&w.client.reexecutor_info(&rex).unwrap(), &before);
+    assert_eq!(w.token.balance(&rex), 1400 * XLM);
+    assert_eq!(w.token.balance(&w.client.address), 600 * XLM);
+}
+
+#[test]
+fn withdraw_stake_is_refused_for_an_address_that_never_registered() {
+    let e = Env::default();
+    let w = setup(&e);
+    // Somebody else's stake is in the contract, and must stay there.
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+    let stranger = Address::generate(&e);
+    fund(&w, &stranger, 100 * XLM);
+
+    for amount in [1, 100 * XLM, 600 * XLM] {
+        assert_eq!(
+            w.client.try_withdraw_stake(&stranger, &amount),
+            Err(Ok(Error::ReexecutorNotActive)),
+            "{amount}"
+        );
+    }
+    assert!(w.client.reexecutor_info(&stranger).is_none());
+    assert_eq!(w.token.balance(&stranger), 100 * XLM);
+    assert_eq!(w.token.balance(&w.client.address), 600 * XLM);
+}
+
+#[test]
+fn a_withdrawal_that_leaves_less_than_the_floor_deactivates_and_blocks_the_next_vote() {
+    let e = Env::default();
+    let w = setup(&e); // floor = 500 XLM
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    let vote = BytesN::from_array(&e, &[3u8; 32]);
+
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex); // stake = 600 XLM
+
+    // Down to exactly the floor: still active.
+    w.client.withdraw_stake(&rex, &(100 * XLM));
+    let at_floor = w.client.reexecutor_info(&rex).unwrap();
+    assert_eq!(at_floor.stake_amount, 500 * XLM);
+    assert!(at_floor.active);
+
+    // One stroop below it: inactive, with the rest of the stake still held.
+    w.client.withdraw_stake(&rex, &1);
+    let below = w.client.reexecutor_info(&rex).unwrap();
+    assert_eq!(below.stake_amount, 500 * XLM - 1);
+    assert!(!below.active);
+    assert_eq!(w.token.balance(&rex), 1500 * XLM + 1);
+    assert_eq!(w.token.balance(&w.client.address), 50 * XLM + 500 * XLM - 1);
+
+    // Its next vote is refused, and leaves no trace on the submission or on it.
+    assert_eq!(
+        w.client.try_attest_replay(&rex, &id, &vote, &true),
+        Err(Ok(Error::ReexecutorNotActive))
+    );
+    let sub = w.client.get_submission(&id).unwrap();
+    assert_eq!(sub.match_votes, 0);
+    assert_eq!(sub.bonded_weight_matched, 0);
+    assert_eq!(w.client.reexecutor_info(&rex).unwrap().open_attestations, 0);
+}
+
+#[test]
+fn stake_events_carry_the_new_stake_and_the_active_flag() {
+    let e = Env::default();
+    let w = setup(&e); // floor = 500 XLM
+    let rex = Address::generate(&e);
+    fund(&w, &rex, 2000 * XLM);
+    let registered = |stake_amount: i128, active: bool| {
+        ReexecutorRegistered {
+            reexecutor: rex.clone(),
+            stake_amount,
+            active,
+        }
+        .to_xdr(&e, &w.client.address)
+    };
+    let withdrawn = |new_stake: i128, active: bool| {
+        ReexecutorStakeWithdrawn {
+            reexecutor: rex.clone(),
+            new_stake,
+            active,
+        }
+        .to_xdr(&e, &w.client.address)
+    };
+
+    // Registered below the floor: the stake is recorded, inactive.
+    w.client.register_reexecutor(&rex, &(400 * XLM));
+    let events = e.events().all();
+    assert!(events.events().contains(&registered(400 * XLM, false)));
+
+    // The event of a top-up carries the new total, not the amount added.
+    w.client.register_reexecutor(&rex, &(200 * XLM));
+    let events = e.events().all();
+    assert!(events.events().contains(&registered(600 * XLM, true)));
+    assert!(!events.events().contains(&registered(200 * XLM, true)));
+
+    // A withdrawal below the floor reports what is left and that it is inactive.
+    w.client.withdraw_stake(&rex, &(150 * XLM));
+    let events = e.events().all();
+    assert!(events.events().contains(&withdrawn(450 * XLM, false)));
+
+    // Withdrawing the rest reports a stake of zero.
+    w.client.withdraw_stake(&rex, &(450 * XLM));
+    let events = e.events().all();
+    assert!(events.events().contains(&withdrawn(0, false)));
+
+    // A refused withdrawal publishes no event for the stake it did not reach.
+    assert_eq!(
+        w.client.try_withdraw_stake(&rex, &1),
+        Err(Ok(Error::InvalidAmount))
+    );
+    let events = e.events().all();
+    assert!(!events.events().contains(&withdrawn(-1, false)));
 }
 
 // ---- voter allow-list ----
