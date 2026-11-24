@@ -54,6 +54,8 @@ export interface SubmissionTable {
   finalize_tx_hash: string | null;
   escrow_value: string | null;
   min_challenger_bond: string | null;
+  /** When a retrieval submission was escalated to a full replay quorum (mismatch, challenge, or agent flagged). */
+  full_replay_requested_at: Timestamp | null;
   /** Last time the relay endpoint broadcast this draft's signed transaction. */
   relay_started_at: Timestamp | null;
   created_at: GeneratedTimestamp;
