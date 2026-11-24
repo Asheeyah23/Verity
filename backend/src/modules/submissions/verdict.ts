@@ -14,7 +14,12 @@ const TERMINAL: SubmissionStatus[] = ["verified", "slashed", "expired_unverified
  *
  * How the verdict was reached is read back from the contract, never assumed —
  * a window that elapsed without consensus must not be recorded as consensus. */
-export async function recordTerminalVerdict(submissionRowId: string, status: string, txHash?: string | null) {
+export async function recordTerminalVerdict(
+  submissionRowId: string,
+  status: string,
+  txHash?: string | null,
+  closedAt?: Date
+) {
   if (!TERMINAL.includes(status as SubmissionStatus)) return;
   const terminal = status as SubmissionStatus;
 
@@ -60,7 +65,7 @@ export async function recordTerminalVerdict(submissionRowId: string, status: str
     // A challenge that lapsed without a resolution is closed out off-chain too.
     await db
       .updateTable("challenge")
-      .set({ resolved_at: new Date() })
+      .set({ resolved_at: closedAt ?? new Date() })
       .where("submission_id", "=", sub.id)
       .where("resolved_at", "is", null)
       .execute();

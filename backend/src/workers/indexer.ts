@@ -57,10 +57,98 @@ function ledgerOfPagingToken(token: string): number {
   return Number(BigInt(token.split("-")[0]) >> 32n);
 }
 
+const ISO_TIMESTAMP_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i;
+
+/** Parses the RPC's ISO-8601 `ledgerClosedAt` string into a Date, falling
+ * back to wall-clock time with a warning if the field is missing or malformed. */
+export function parseLedgerClosedAt(
+  ledgerClosedAt: unknown,
+  context?: { id?: string; ledger?: number },
+  now: () => Date = () => new Date(),
+  warn: (message: string) => void = console.warn
+): Date {
+  if (typeof ledgerClosedAt === "string") {
+    const trimmed = ledgerClosedAt.trim();
+    if (ISO_TIMESTAMP_RE.test(trimmed)) {
+      const parsed = new Date(trimmed);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+  }
+  const where = context?.id ? `event ${context.id} (ledger ${context.ledger ?? "?"})` : "event";
+  warn(
+    `[indexer] invalid ledgerClosedAt (${String(ledgerClosedAt)}) on ${where}, falling back to current time`
+  );
+  return now();
+}
+
+export function buildReplayAttestedPatch(params: {
+  outputHash: Buffer;
+  matched: boolean;
+  txHash: string;
+  closedAt: Date;
+}) {
+  return {
+    status: "confirmed_onchain" as const,
+    replay_output_hash: params.outputHash.toString("hex"),
+    match: params.matched,
+    tx_hash: params.txHash,
+    executed_at: params.closedAt,
+  };
+}
+
+export function buildSpotCheckEvidence(params: {
+  replayOutputHash: string;
+  txHash: string;
+  ledger: number;
+  closedAt: Date;
+}) {
+  return {
+    replay_output_hash: params.replayOutputHash,
+    tx_hash: params.txHash,
+    ledger: params.ledger,
+    ledger_closed_at: params.closedAt.toISOString(),
+  };
+}
+
+export function buildChallengeOpenedRow(params: {
+  submissionId: string;
+  challenger: string;
+  bond: bigint;
+  txHash: string;
+  closedAt: Date;
+}) {
+  return {
+    submission_id: params.submissionId,
+    challenger_account: params.challenger,
+    challenger_bond: params.bond.toString(),
+    chain_tx_hash: params.txHash,
+    opened_at: params.closedAt,
+  };
+}
+
+export function buildChallengeResolvedPatch(params: {
+  resolution: unknown;
+  method: unknown;
+  closedAt: Date;
+}) {
+  return {
+    resolution: fromChainResolution(params.resolution),
+    resolution_method: challengeResolutionMethod(params.method),
+    resolved_at: params.closedAt,
+  };
+}
+
 /** Idempotent by construction: every handler upserts on a unique key derived
  * from on-chain identity (chain_submission_id, (submission,reexecutor) pair,
  * etc.), so replaying the same event twice (e.g. after a restart) is safe. */
-async function handleEvent(topic: unknown[], value: unknown, ledger: number, txHash: string) {
+async function handleEvent(
+  topic: unknown[],
+  value: unknown,
+  ledger: number,
+  txHash: string,
+  closedAt: Date
+) {
   const kind = topic[0] as string;
 
   switch (kind) {
@@ -216,13 +304,12 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
           .where("submission_id", "=", sub.id)
           .where("reexecutor_id", "=", rex.id)
           .executeTakeFirst();
-        const patch = {
-          status: "confirmed_onchain" as const,
-          replay_output_hash: v.output_hash.toString("hex"),
-          match: v.matched,
-          tx_hash: txHash,
-          executed_at: new Date(),
-        };
+        const patch = buildReplayAttestedPatch({
+          outputHash: v.output_hash,
+          matched: v.matched,
+          txHash,
+          closedAt,
+        });
         if (existing) {
           await db.updateTable("replay").set(patch).where("id", "=", existing.id).execute();
         } else {
@@ -238,7 +325,14 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
           .updateTable("spot_check")
           .set({
             result: v.matched ? "match" : "mismatch",
-            evidence: JSON.stringify({ replay_output_hash: patch.replay_output_hash, tx_hash: txHash, ledger }),
+            evidence: JSON.stringify(
+              buildSpotCheckEvidence({
+                replayOutputHash: patch.replay_output_hash,
+                txHash,
+                ledger,
+                closedAt,
+              })
+            ),
           })
           .where("submission_id", "=", sub.id)
           .where("reexecutor_id", "=", rex.id)
@@ -270,12 +364,15 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
       if (sub) {
         await db
           .insertInto("challenge")
-          .values({
-            submission_id: sub.id,
-            challenger_account: v.challenger,
-            challenger_bond: v.bond.toString(),
-            chain_tx_hash: txHash,
-          })
+          .values(
+            buildChallengeOpenedRow({
+              submissionId: sub.id,
+              challenger: v.challenger,
+              bond: v.bond,
+              txHash,
+              closedAt,
+            })
+          )
           .onConflict((oc) => oc.doNothing())
           .returningAll()
           .executeTakeFirst()
@@ -311,11 +408,13 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
       if (sub) {
         await db
           .updateTable("challenge")
-          .set({
-            resolution: fromChainResolution(v.resolution),
-            resolution_method: challengeResolutionMethod(v.method),
-            resolved_at: new Date(),
-          })
+          .set(
+            buildChallengeResolvedPatch({
+              resolution: v.resolution,
+              method: v.method,
+              closedAt,
+            })
+          )
           .where("submission_id", "=", sub.id)
           .where("resolved_at", "is", null)
           .execute();
@@ -331,7 +430,7 @@ async function handleEvent(topic: unknown[], value: unknown, ledger: number, txH
         .select(["id"])
         .where("chain_submission_id", "=", chainSubmissionId)
         .executeTakeFirst();
-      if (sub) await recordTerminalVerdict(sub.id, fromChainVerdict(v.verdict), txHash);
+      if (sub) await recordTerminalVerdict(sub.id, fromChainVerdict(v.verdict), txHash, closedAt);
       break;
     }
 
@@ -465,7 +564,8 @@ export async function pollOnce(): Promise<number> {
     try {
       topic = ev.topic.map((t) => scValToNative(t));
       const value = scValToNative(ev.value);
-      await handleEvent(topic, value, ev.ledger, ev.txHash);
+      const closedAt = parseLedgerClosedAt(ev.ledgerClosedAt, { id: ev.id, ledger: ev.ledger });
+      await handleEvent(topic, value, ev.ledger, ev.txHash, closedAt);
       stuckEvent = null;
     } catch (err) {
       if (isTransientError(err)) throw err;
