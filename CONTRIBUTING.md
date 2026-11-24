@@ -32,7 +32,7 @@ public issues; see [SECURITY.md](SECURITY.md).
 
 | Tool | Version | Needed for |
 |---|---|---|
-| Node.js | 20+ (CI uses 22) | backend, agent, dashboard |
+| Node.js | 22.6+ (CI and `.nvmrc` use 22) | backend, agent, dashboard |
 | pnpm | 10 | workspace |
 | [stellar-cli](https://developers.stellar.org/docs/tools/cli) | current | deploying, bindings, identities |
 | Rust | pinned by `contracts/rust-toolchain.toml` | contract work only |

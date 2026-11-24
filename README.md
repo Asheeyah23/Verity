@@ -74,7 +74,7 @@ and `backend/src/chain/canonical.ts`.
 
 ## Run it
 
-Requirements: Node 20+, pnpm 10, [stellar-cli](https://developers.stellar.org/docs/tools/cli).
+Requirements: Node 22.6+, pnpm 10, [stellar-cli](https://developers.stellar.org/docs/tools/cli).
 Docker is not needed. Rust is needed to deploy contracts (the deploy script
 builds them) and to change or test them, but not to run against a deployment
 that already exists.
