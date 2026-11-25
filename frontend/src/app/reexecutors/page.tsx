@@ -6,7 +6,7 @@ import { Card, CardBody } from "../../components/ui/card";
 import { buttonClasses } from "../../components/ui/button";
 import { ReexecutorStatus } from "../../components/reexecutor-status";
 import { cn } from "../../lib/utils";
-import { stroopsToXlm, truncateMiddle, formatRelativeTime } from "../../lib/format";
+import { formatRelativeTime, formatUnits, resolveBondAsset, truncateMiddle } from "../../lib/format";
 
 export const metadata: Metadata = { title: "Re-executors" };
 
@@ -15,6 +15,7 @@ export default async function ReexecutorsPage() {
     backendGet<Reexecutor[]>("/v1/reexecutors"),
     backendGet<GateConfig>("/v1/config"),
   ]);
+  const asset = resolveBondAsset(config.bond_asset);
 
   return (
     <div className="space-y-6">
@@ -76,7 +77,9 @@ export default async function ReexecutorsPage() {
                     <td className="px-5 py-3">
                       <ReexecutorStatus reexecutor={r} allowlist={config.reexecutor_allowlist} />
                     </td>
-                    <td className="px-5 py-3 text-right font-mono">{stroopsToXlm(r.stake_amount)} XLM</td>
+                    <td className="px-5 py-3 text-right font-mono">
+                      {formatUnits(r.stake_amount, asset.decimals, asset.symbol)}
+                    </td>
                     <td className="px-5 py-3 text-right font-mono">{r.stats.attested}</td>
                     <td className="px-5 py-3 text-right font-mono">{r.stats.missed}</td>
                     <td className="px-5 py-3 text-right font-mono">{r.slashed_count}</td>

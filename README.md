@@ -124,9 +124,9 @@ longer the recorded account (a replaced keeper is only reported: it holds no
 authority on-chain). Named deployments use `verity-<name>-…` aliases.
 
 Secrets stay in your stellar-cli keystore. `pnpm dev` reads them at start-up
-and passes them to each process through its environment. The only secrets it
-writes to disk are in `backend/.env` (gitignored), and only if that file does
-not exist; it also creates the local database under `.pgdata/`.
+and passes them to each process through its environment. The only secret it
+writes to disk is the session `JWT_SECRET` in `backend/.env` (gitignored), and
+only if that file does not exist yet; it also creates the local database under `.pgdata/`.
 
 ### Prove it works end to end
 
@@ -233,7 +233,8 @@ Deterministic tasks run in a sandboxed JavaScript runtime:
    - Returning a `BigInt` throws an error and counts as a mismatch.
    - Async functions returning a `Promise` serialize to `{}`. Write synchronous code.
 8. **Artifact upload limits.** Each artifact (function, input, claimed output) may be
-   at most 262144 bytes (`ARTIFACT_MAX_BYTES`). The API request body limit is 1 MiB.
+   at most 262144 bytes (`ARTIFACT_MAX_BYTES`). The upload's request body limit follows
+   that setting (its base64 length plus 4096 bytes); other request bodies cap at 1 MiB.
    Each account may upload 30 artifacts per minute (`ARTIFACT_UPLOADS_PER_MINUTE`),
    and the store holds at most 10 GiB (`ARTIFACT_MAX_TOTAL_BYTES`); uploading new
    content past that returns HTTP 507. Content already stored never counts again.
@@ -271,15 +272,17 @@ Deterministic tasks run in a sandboxed JavaScript runtime:
     credentials, auth headers, or cookies. URLs containing embedded credentials
     (`user:pass@`) are rejected as a mismatch before any request is sent. The endpoint must
     be publicly accessible without authentication. Only `http:` and `https:` schemes are
-    supported. The URL must resolve to a public IP address: loopback, private, and
-    link-local IP addresses are rejected, and the request connects directly to the
+    supported. The URL must resolve to a public IP address under the same non-public range
+    guard used for [Webhooks](#webhooks) (`reexecutor-agent/src/sandbox/address.ts`):
+    private, loopback, link-local, multicast, documentation and reserved ranges — plus IPv6
+    forms that wrap IPv4 addresses — are rejected, and the request connects directly to the
     validated IP.
 14. **Redirects and response codes.** Redirects are not followed; HTTP 3xx status codes
     are treated as a mismatch. Definitive 4xx statuses (for example 404 or 410) and other
     non-2xx responses are also mismatches. Statuses 401, 403, 408, 429, 451 and anything
     from 500 up, DNS failures, timeouts, and network errors are treated as transient: the worker retries for up to `min(RETRIEVAL_RETRY_BUDGET_S, challenge window / 2)`
     seconds (default `RETRIEVAL_RETRY_BUDGET_S` is 120 s), verifies its own network
-    connectivity, and only votes mismatch if its own connectivity is intact. Each HTTP request
+    connectivity (via `CONNECTIVITY_CHECK_URL`, defaulting to `SOROBAN_RPC_URL`), and requires proof of public internet access (via `INTERNET_CHECK_URL`, defaulting to Horizon) if the connectivity probe resolves to a private address, only voting mismatch if public internet access is proven. Each HTTP request
     times out after 10 s of silence or 30 s overall, and response bodies are capped at 1,000,000 bytes.
 15. **JSON pointers.** If the response body is JSON, an optional RFC 6901 pointer (e.g. `/data/0/price`)
     selects the targeted value (`~1` escapes `/`, `~0` escapes `~`). The pointer must start
@@ -346,6 +349,7 @@ call it was built for.
 | `POST /v1/marketplaces/:id/webhooks` | Bearer | 400 for an unknown event name; 403 for another account's marketplace |
 | `GET /v1/marketplaces/:id/webhooks` | Bearer | your subscriptions, without `secret`; 403 for another account's marketplace |
 | `PATCH /v1/marketplaces/:id/webhooks/:webhookId` | Bearer | `{"active": boolean}`; 403 for another account's marketplace, 404 for an unknown webhook |
+| `DELETE /v1/marketplaces/:id/webhooks/:webhookId` | Bearer | removes subscription and its delivery history, freeing a slot; 204 on success, 403 for another account's marketplace, 404 for an unknown webhook |
 
 ### Authentication and token lifetime
 
@@ -356,6 +360,8 @@ on the routes marked above. The JWT lasts **1 hour** and carries the account
 as `sub`; a missing header is 401 `{ "error": "missing bearer token" }` and a
 bad or expired token 401 `{ "error": "invalid or expired token" }`.
 `GET /.well-known/stellar.toml` advertises the auth endpoint and signing key.
+`GET /auth`, `POST /auth`, and `OPTIONS /auth` send `Access-Control-Allow-Origin: *`
+so browser wallets can complete SEP-10 directly from third-party origins.
 
 Only `GET /auth` and `POST /v1/submissions` return `network_passphrase`.
 The other build endpoints do not: `POST /v1/submissions/:id/challenge`
@@ -373,7 +379,7 @@ Every error body is `{ "error": "<message>" }`, with one addition:
 | 400 | request validation | `{ "error": "<path>: <message>; …" }` (one entry per invalid field) |
 | 400/403/404 | hand-written route checks | `{ "error": … }` — e.g. 404 `{ "error": "not found" }`, 403 `{ "error": "forbidden" }` on the ownership checks above |
 | 400/403/422/502/503/504 | relay checks | `{ "error": … }` |
-| 413 | artifact over `ARTIFACT_MAX_BYTES` (default 262144; request bodies cap at 1 MiB) | `{ "error": … }` |
+| 413 | artifact over `ARTIFACT_MAX_BYTES` (default 262144), or a request body over its limit: 1 MiB, and for `POST /v1/artifacts` the base64 length of `ARTIFACT_MAX_BYTES` plus 4096 bytes | `{ "error": … }` |
 | 507 | artifact store is full (`ARTIFACT_MAX_TOTAL_BYTES`) | `{ "error": … }` |
 | 422 | the contract rejected the transaction | `{ "error": "EscrowGate rejected the transaction: <ErrorName>", "contract_error": "<ErrorName>" }` |
 | 500 | anything unexpected | `{ "error": "internal error" }` |
@@ -411,8 +417,9 @@ relay:
 | Case | Response |
 |---|---|
 | key used by a *different* account | keys are scoped to the authenticated account; another account may reuse the same key independently (201 with its own draft) |
-| same account, submission already on-chain | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign |
-| same account, relayed transaction already landed | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign; the indexer attaches `chain_submission_id` |
+| same account, submission already on-chain, same fields | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign |
+| same account, relayed transaction already landed, same fields | 200 `{ submission, unsigned_transaction_xdr: null, network_passphrase }` — nothing to sign; the indexer attaches `chain_submission_id` |
+| same account, submission already on-chain or already landed, any field changed | 409 `{ "error": "idempotency_key was already used for a different submission (<fields> differ). …" }` — the earlier submission is unchanged; send the new one with a new key |
 | same account, draft relayed and possibly still landing (within the 5.5-minute validity window) | 409 `{ "error": "An earlier attempt for this idempotency_key was already sent to the network and may still confirm. Retry in a few minutes; it will resolve to that submission if it lands." }` — retry after a few minutes |
 | same account, draft never relayed, or earlier relay failed or expired | draft updated, fresh transaction built; 200 `{ submission, unsigned_transaction_xdr, network_passphrase }` |
 | new key for this account | 201 with the same three fields |
@@ -440,43 +447,41 @@ marketplace's Stellar account:
 {
   "url": "https://example.org/verity-webhook",
   "secret": "replace-with-a-long-random-secret",
-  "events": ["submission.verified", "submission.slashed", "submission.disputed"]
+  "events": ["submission.verified", "submission.slashed", "submission.expired_unverified", "submission.disputed"]
 }
 ```
 
 The request requires a valid URL of at most 2048 characters, a `secret` of 8
 to 256 characters, and a non-empty `events` array drawn from `submission.verified`,
-`submission.slashed` and `submission.disputed`; any other name is rejected
+`submission.slashed`, `submission.expired_unverified` and `submission.disputed`; any other name is rejected
 with HTTP 400 and duplicates are stored once. The marketplace ID is a UUID;
 only its own account may register a webhook (otherwise HTTP 403). A
 successful registration returns the subscription row with HTTP 201. A
 marketplace can hold at most 10 subscriptions (HTTP 409 beyond that);
-deactivating one does not free its slot. The URL must resolve to a public
-address: private, loopback, link-local, multicast and reserved ranges (and IPv6
-forms that wrap them) are refused with HTTP 400, both at registration and again
-at every delivery, which connects to the address it just checked.
+delete an existing subscription to free a slot (deactivating one does not).
+The URL must resolve to a public address: private, loopback, link-local,
+multicast, documentation and reserved ranges (and IPv6 forms that wrap IPv4
+addresses) are refused with HTTP 400, both at registration and again at every
+delivery, which connects to the address it just checked.
 
 `GET /v1/marketplaces/:id/webhooks` lists the marketplace's subscriptions
 (`id`, `url`, `events`, `active`, `created_at`; the `secret` is never
 returned). `PATCH /v1/marketplaces/:id/webhooks/:webhookId` with
 `{"active": false}` stops deliveries to a subscription and `{"active": true}`
 resumes them; it returns the updated subscription, or HTTP 404 if that
-webhook does not exist on this marketplace. Both require the marketplace's own
-account (otherwise HTTP 403).
+webhook does not exist on this marketplace. `DELETE /v1/marketplaces/:id/webhooks/:webhookId`
+permanently removes a subscription, cascades and deletes its delivery history,
+and frees its slot (returning HTTP 204, or HTTP 404 if not found). All require
+the marketplace's own account (otherwise HTTP 403).
 
 | Event | When emitted | `data` |
 | --- | --- | --- |
-| `submission.verified` | First transition into the `verified` terminal status | `submission_id`, `status: "verified"`, `tx_hash` |
-| `submission.slashed` | First transition into the `slashed` terminal status | `submission_id`, `status: "slashed"`, `tx_hash` |
+| `submission.verified` | First transition into the `verified` terminal status | `submission_id`, `chain_submission_id`, `escrow_ref`, `status: "verified"`, `resolution_method`, `tx_hash` |
+| `submission.slashed` | First transition into the `slashed` terminal status | `submission_id`, `chain_submission_id`, `escrow_ref`, `status: "slashed"`, `resolution_method`, `tx_hash` |
+| `submission.expired_unverified` | First transition into the `expired_unverified` terminal status | `submission_id`, `chain_submission_id`, `escrow_ref`, `status: "expired_unverified"`, `resolution_method`, `tx_hash` |
 | `submission.disputed` | When a new on-chain challenge is first recorded | `submission_id`, `status: "disputed"`, `tx_hash` |
 
-The `submission_id` is Verity's submission **UUID**, not its numeric on-chain
-submission ID. `tx_hash` is the relevant finalize/resolve or challenge
-transaction hash and can be `null` if a terminal verdict is first observed
-by reconciliation. The `expired_unverified` terminal status sends **no**
-webhook. A `submission.verified` event can result from a window expiring
-without consensus; inspect the submission's `resolution_method` via
-`GET /v1/submissions/:id` to distinguish how the verdict was reached.
+The `submission_id` is Verity's submission **UUID**, `chain_submission_id` is its numeric on-chain submission ID (or `null`), and `escrow_ref` is the caller's escrow reference. `tx_hash` is the relevant finalize/resolve or challenge transaction hash and can be `null` if a terminal verdict is first observed by reconciliation. The verdict's `resolution_method` (`reexecution_consensus`, `window_elapsed`, `zk_proof`) is stored and included directly in the payload, so a `submission.verified` that came from a window expiring without consensus can be told apart without another request.
 
 Each delivery is an HTTP `POST` with `content-type: application/json` and
 three headers (`x-verity-delivery`, `x-verity-timestamp`, `x-verity-signature`), containing the UTF-8 JSON serialization
@@ -488,7 +493,10 @@ only a **shape example**; the identifiers below are placeholders:
   "event": "submission.verified",
   "data": {
     "submission_id": "<verity-submission-uuid>",
+    "chain_submission_id": "7",
+    "escrow_ref": "order-1234",
     "status": "verified",
+    "resolution_method": "reexecution_consensus",
     "tx_hash": null
   }
 }
@@ -552,11 +560,23 @@ createServer(async (req, res) => {
 **URL rule: public addresses only.** Use a publicly reachable `http:` or
 `https:` receiver URL whose host resolves. At registration, an unresolvable
 host or an address rejected by `assertPublicHttpUrl` returns HTTP 400.
-The guard rejects private, loopback and link-local addresses it recognizes.
-Its checks do not cover every non-public IP range, so passing validation is
-not a comprehensive network isolation guarantee.
-The address check runs both at registration and immediately before delivery.
+As stated above, the guard (`backend/src/modules/webhooks/url-guard.ts`,
+shared in lockstep with `reexecutor-agent/src/sandbox/address.ts` for
+retrieval tasks) rejects all non-public IPv4 ranges (`0.0.0.0/8`,
+`10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`,
+`172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24`,
+`192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+`224.0.0.0/4`, `240.0.0.0/4`), non-public IPv6 ranges (`::/128`, `::1/128`,
+`100::/64`, `2001:db8::/32`, `fc00::/7`, `fe80::/10`, `fec0::/10`,
+`ff00::/8`), deprecated IPv4-compatible IPv6 addresses (`::/96`), and
+IPv4-mapped (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`) and 6to4 (`2002::/16`)
+addresses whose embedded IPv4 address is non-public.
+The address check runs both at registration and immediately before delivery,
+and the delivery connects directly to the checked address.
 Redirects are not followed: any redirect fails the delivery.
+An application-level address check is not network isolation: operators should
+also enforce outbound egress filtering on the host for the backend and
+re-executor workers.
 
 **Delivery is best-effort: one attempt, no retry.** A delivery times out
 after 5 seconds. HTTP 2xx counts as delivered; other responses, timeouts,

@@ -7,7 +7,7 @@ import type { GateConfig, Reexecutor, SlashingEvent } from "../../../lib/types";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { ReexecutorStatus, reexecutorStanding } from "../../../components/reexecutor-status";
 import { WithdrawStake } from "../../../components/withdraw-stake";
-import { stroopsToXlm, truncateMiddle, formatRelativeTime } from "../../../lib/format";
+import { formatRelativeTime, formatUnits, resolveBondAsset, truncateMiddle } from "../../../lib/format";
 import { TESTNET_EXPLORER_ACCOUNT, TESTNET_EXPLORER_TX } from "../../../lib/config";
 
 const loadReexecutorDetail = cache((id: string) =>
@@ -46,6 +46,7 @@ export default async function ReexecutorDetailPage({
   ]);
   if (!data) notFound();
   const { reexecutor, slashing_events } = data;
+  const asset = resolveBondAsset(config.bond_asset);
   const standing = reexecutorStanding(reexecutor, config.reexecutor_allowlist);
   const { stats } = reexecutor;
   const judged = stats.agreed + stats.disagreed;
@@ -74,7 +75,11 @@ export default async function ReexecutorDetailPage({
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Tile label="Stake" value={`${stroopsToXlm(reexecutor.stake_amount)} XLM`} hint={`Floor ${stroopsToXlm(config.min_stake_floor)} XLM`} />
+        <Tile
+          label="Stake"
+          value={formatUnits(reexecutor.stake_amount, asset.decimals, asset.symbol)}
+          hint={`Floor ${formatUnits(config.min_stake_floor, asset.decimals, asset.symbol)}`}
+        />
         <Tile
           label="Votes cast"
           value={String(stats.attested)}
@@ -99,6 +104,7 @@ export default async function ReexecutorDetailPage({
           stakeStroops={reexecutor.stake_amount}
           floorStroops={config.min_stake_floor}
           networkPassphrase={config.network_passphrase}
+          bondAsset={config.bond_asset}
         />
       </WithdrawPanel>
 
@@ -133,7 +139,9 @@ export default async function ReexecutorDetailPage({
                     <p className="text-xs text-text-tertiary">{formatRelativeTime(event.created_at)}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-mono text-status-slashed">−{stroopsToXlm(event.amount)} XLM</p>
+                    <p className="font-mono text-status-slashed">
+                      −{formatUnits(event.amount, asset.decimals, asset.symbol)}
+                    </p>
                     {event.tx_hash && (
                       <a
                         href={TESTNET_EXPLORER_TX(event.tx_hash)}

@@ -4,6 +4,7 @@ import {
   fromChainVerdict,
   fromChainResolution,
   fromChainResolutionMethod,
+  challengeResolutionMethod,
   toChainTaskType,
   sha256Bytes,
   hex,
@@ -98,6 +99,23 @@ describe("toChainTaskType", () => {
       tag: "Unverifiable",
       values: undefined,
     });
+  });
+});
+
+describe("challengeResolutionMethod", () => {
+  it("maps ReexecutionConsensus to reexecution_consensus", () => {
+    assert.equal(challengeResolutionMethod({ tag: "ReexecutionConsensus", values: undefined }), "reexecution_consensus");
+    assert.equal(challengeResolutionMethod(["ReexecutionConsensus"]), "reexecution_consensus");
+  });
+
+  it("maps ZkProof to zk_proof", () => {
+    assert.equal(challengeResolutionMethod({ tag: "ZkProof", values: undefined }), "zk_proof");
+  });
+
+  it("rejects WindowElapsed, None, or unknown variants as null", () => {
+    assert.equal(challengeResolutionMethod({ tag: "WindowElapsed", values: undefined }), null);
+    assert.equal(challengeResolutionMethod({ tag: "None", values: undefined }), null);
+    assert.equal(challengeResolutionMethod("Unknown"), null);
   });
 });
 

@@ -19,7 +19,15 @@ Object.assign(process.env, {
   HOME_DOMAIN: "localhost",
 });
 
-const { consensusOutcome, minChallengerBond, contractErrorName } = await import("./actions.js");
+const {
+  consensusOutcome,
+  minChallengerBond,
+  contractErrorName,
+  finalizeOnChain,
+  resolveChallengeOnChain,
+  releaseAttestationLockOnChain,
+} = await import("./actions.js");
+const { escrowGateAsKeeper } = await import("./clients.js");
 
 const record = (fields: Partial<SubmissionRecord>) => fields as SubmissionRecord;
 
@@ -132,6 +140,95 @@ describe("contractErrorName", () => {
   it("matches every entry in the generated Errors table", () => {
     for (const [code, { message }] of Object.entries(Errors)) {
       assert.equal(contractErrorName(new Error(`HostError: Error(Contract, #${code})`)), message);
+    }
+  });
+});
+
+describe("keeper transactions timeout option", () => {
+  it("passes timeoutInSeconds to finalize", async () => {
+    const orig = escrowGateAsKeeper.finalize;
+    let passedOptions: any = null;
+    escrowGateAsKeeper.finalize = (async (_args: any, options: any) => {
+      passedOptions = options;
+      return {
+        isReadCall: true,
+        result: { unwrap: () => ({ tag: "Verified", values: void 0 }) },
+      };
+    }) as any;
+    try {
+      await finalizeOnChain("42");
+      assert.deepEqual(passedOptions, { timeoutInSeconds: 30 });
+    } finally {
+      escrowGateAsKeeper.finalize = orig;
+    }
+  });
+
+  it("passes timeoutInSeconds to resolve_challenge", async () => {
+    const orig = escrowGateAsKeeper.resolve_challenge;
+    let passedOptions: any = null;
+    escrowGateAsKeeper.resolve_challenge = (async (_args: any, options: any) => {
+      passedOptions = options;
+      return {
+        signAndSend: async () => ({
+          result: { unwrap: () => ({ tag: "Verified", values: void 0 }) },
+          sendTransactionResponse: { hash: "abc123hash" },
+        }),
+      };
+    }) as any;
+    try {
+      const res = await resolveChallengeOnChain("42");
+      assert.deepEqual(passedOptions, { timeoutInSeconds: 30 });
+      assert.equal(res.txHash, "abc123hash");
+    } finally {
+      escrowGateAsKeeper.resolve_challenge = orig;
+    }
+  });
+
+  it("passes timeoutInSeconds to release_attestation_lock", async () => {
+    const orig = escrowGateAsKeeper.release_attestation_lock;
+    let passedOptions: any = null;
+    escrowGateAsKeeper.release_attestation_lock = (async (_args: any, options: any) => {
+      passedOptions = options;
+      return {
+        signAndSend: async () => ({
+          result: { unwrap: () => void 0 },
+          sendTransactionResponse: { hash: "def456hash" },
+        }),
+      };
+    }) as any;
+    try {
+      const hash = await releaseAttestationLockOnChain("42", "GACCOUNT123");
+      assert.deepEqual(passedOptions, { timeoutInSeconds: 30 });
+      assert.equal(hash, "def456hash");
+    } finally {
+      escrowGateAsKeeper.release_attestation_lock = orig;
+    }
+  });
+
+  it("logs transaction hash when TransactionStillPending is thrown", async () => {
+    const orig = escrowGateAsKeeper.finalize;
+    escrowGateAsKeeper.finalize = (async () => ({
+      isReadCall: false,
+      signed: { hash: () => Buffer.from("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "hex") },
+      signAndSend: async () => {
+        const err = new Error(
+          'Waited 30 seconds for transaction to complete, but it did not. Returning anyway. Check the transaction status manually. Sent transaction: { "hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }'
+        );
+        err.name = "TransactionStillPendingError";
+        throw err;
+      },
+    })) as any;
+
+    const logged: string[] = [];
+    const origError = console.error;
+    console.error = (...args: any[]) => logged.push(args.join(" "));
+
+    try {
+      await assert.rejects(finalizeOnChain("42"), (err: any) => err.name === "TransactionStillPendingError");
+      assert.equal(logged.some((l) => l.includes("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")), true);
+    } finally {
+      escrowGateAsKeeper.finalize = orig;
+      console.error = origError;
     }
   });
 });

@@ -27,6 +27,9 @@ x-reexecutor-env: &reexecutor-env
   <<: *chain-env
   BACKEND_URL: http://backend:3001
   POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-3000}
+  HEARTBEAT_INTERVAL_MS: ${HEARTBEAT_INTERVAL_MS:-}
+  RETRIEVAL_RETRY_BUDGET_S: ${RETRIEVAL_RETRY_BUDGET_S:-}
+  CONNECTIVITY_CHECK_URL: ${CONNECTIVITY_CHECK_URL:-}
 
 services:
   postgres:
@@ -84,6 +87,18 @@ services:
       ARTIFACT_STORAGE_DIR: /app/backend/.artifacts
       # The dashboard forwards each visitor's address for rate limiting.
       TRUST_PROXY: "true"
+      ATTESTATION_SIGNING_SECRET: ${ATTESTATION_SIGNING_SECRET:-}
+      RUN_WORKERS: ${RUN_WORKERS:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-}
+      REEXECUTOR_LIVENESS_S: ${REEXECUTOR_LIVENESS_S:-}
+      REPLAY_OVERASSIGN: ${REPLAY_OVERASSIGN:-}
+      REPLAY_REASSIGN_AFTER_S: ${REPLAY_REASSIGN_AFTER_S:-}
+      DRAFT_TTL_S: ${DRAFT_TTL_S:-}
+      ARTIFACT_MAX_BYTES: ${ARTIFACT_MAX_BYTES:-}
+      ARTIFACT_MAX_TOTAL_BYTES: ${ARTIFACT_MAX_TOTAL_BYTES:-}
+      ARTIFACT_UPLOADS_PER_MINUTE: ${ARTIFACT_UPLOADS_PER_MINUTE:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-}
     volumes:
       - backend_artifacts:/app/backend/.artifacts
     depends_on:

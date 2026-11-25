@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BACKEND_URL } from "../../../../lib/config";
+import { BACKEND_READ_TIMEOUT_MS, BACKEND_URL } from "../../../../lib/config";
 
 export async function GET(req: NextRequest) {
   const account = req.nextUrl.searchParams.get("account");
@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
       {
         headers: forwarded ? { "x-forwarded-for": forwarded } : {},
         cache: "no-store",
+        signal: AbortSignal.timeout(BACKEND_READ_TIMEOUT_MS),
       }
     );
     const data = await res.json().catch(() => ({}));

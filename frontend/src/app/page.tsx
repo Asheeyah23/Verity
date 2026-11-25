@@ -6,7 +6,14 @@ import { buttonClasses } from "../components/ui/button";
 import { VerdictBadge } from "../components/verdict-badge";
 import { FundAccountButton } from "../components/fund-account-button";
 import { FREIGHTER_INSTALL_URL, TESTNET_EXPLORER_CONTRACT } from "../lib/config";
-import { bpsToPercent, formatDuration, formatRelativeTime, stroopsToXlm, truncateMiddle } from "../lib/format";
+import {
+  bpsToPercent,
+  formatDuration,
+  formatRelativeTime,
+  formatUnits,
+  resolveBondAsset,
+  truncateMiddle,
+} from "../lib/format";
 
 const linkClass = "text-accent underline-offset-2 hover:underline";
 
@@ -48,6 +55,7 @@ export default async function HomePage() {
   const online = reexecutors.ok
     ? reexecutors.value.filter((r) => r.online && r.can_vote).length
     : null;
+  const asset = resolveBondAsset(config.bond_asset);
 
   return (
     <div className="space-y-20">
@@ -139,7 +147,7 @@ export default async function HomePage() {
             note={
               config.window_tier_large_s === config.window_tier_small_s
                 ? "for every submission"
-                : `${formatDuration(config.window_tier_large_s)} from ${stroopsToXlm(config.window_tier_small_ceiling)} XLM of escrow value`
+                : `${formatDuration(config.window_tier_large_s)} from ${formatUnits(config.window_tier_small_ceiling, asset.decimals, asset.symbol)} of escrow value`
             }
           />
         </dl>
@@ -193,7 +201,7 @@ export default async function HomePage() {
                 accounts may vote. The admin chooses the voters, not the verdicts.
               </li>
             )}
-            <li>This is Stellar testnet. The XLM has no value and the contracts are unaudited.</li>
+            <li>This is Stellar testnet. The {asset.symbol} has no value and the contracts are unaudited.</li>
           </ul>
           <a
             href={TESTNET_EXPLORER_CONTRACT(config.escrow_gate_contract_id)}
@@ -231,11 +239,12 @@ export default async function HomePage() {
           <li>
             <h3 className="text-sm font-medium">Connect, then get test XLM</h3>
             <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-              Bonds and stakes need a balance. Friendbot, the testnet faucet, sends 10,000 test XLM
-              to a new account.
+              {asset.symbol === "XLM"
+                ? "Bonds and stakes need a balance. Friendbot, the testnet faucet, sends 10,000 test XLM to a new account."
+                : `Transaction fees need test XLM. Friendbot, the testnet faucet, sends 10,000 test XLM to a new account; bonds and stakes also need a ${asset.symbol} trustline and balance.`}
             </p>
             <div className="mt-4">
-              <FundAccountButton />
+              <FundAccountButton bondAsset={asset} />
             </div>
           </li>
         </ol>
@@ -248,7 +257,7 @@ export default async function HomePage() {
           <Link href="/reexecutors/register" className={linkClass}>
             stake as a re-executor
           </Link>{" "}
-          and run a worker of your own. The minimum stake is {stroopsToXlm(config.min_stake_floor)} XLM.
+          and run a worker of your own. The minimum stake is {formatUnits(config.min_stake_floor, asset.decimals, asset.symbol)}.
         </p>
       </section>
     </div>

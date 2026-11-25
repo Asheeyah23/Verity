@@ -1,6 +1,7 @@
 import { Address, FeeBumpTransaction, rpc, scValToNative, TransactionBuilder } from "@stellar/stellar-sdk";
 import { env } from "../config/env.js";
 import { HttpError } from "../http-error.js";
+import { contractErrorName } from "./actions.js";
 
 export const server = new rpc.Server(env.SOROBAN_RPC_URL);
 
@@ -110,4 +111,43 @@ export async function relaySignedXdr(
     console.error(`polling transaction ${hash} failed:`, lastPollError);
   }
   throw new HttpError(504, `Timed out waiting for transaction ${hash} to confirm. It may still land; check before retrying.`);
+}
+
+/** Asserts that an assembled contract transaction's simulation succeeded before
+ * creating drafts or storing rows in the database.
+ * Throws an Error with contract message (for app.ts to map to 422 with contract_error),
+ * HttpError 409 if state needs restoring, or HttpError 422 for other simulation errors. */
+export function assertSimulated(assembled: { simulation?: rpc.Api.SimulateTransactionResponse }): void {
+  if (!assembled.simulation) {
+    throw new HttpError(422, "simulation missing from assembled transaction");
+  }
+  const sim = assembled.simulation;
+  if (rpc.Api.isSimulationRestore(sim)) {
+    throw new HttpError(409, "contract state expired and needs restoring");
+  }
+  if (rpc.Api.isSimulationError(sim)) {
+    const errorStr = sim.error || "unknown simulation error";
+    if (contractErrorName(errorStr)) {
+      throw new Error(errorStr);
+    }
+    throw new HttpError(422, `simulation failed: ${errorStr}`);
+  }
+  if (!rpc.Api.isSimulationSuccess(sim)) {
+    throw new HttpError(422, "simulation was not successful");
+  }
+}
+
+/** Executes a transaction build and maps unfunded account errors (Account not found: G...)
+ * to a friendly 400 Bad Request instead of an unhandled 500. */
+export async function buildWithAccountCheck<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const m = /Account not found:\s*(G[A-Z0-9]{55})/.exec(msg);
+    if (m) {
+      throw new HttpError(400, `account ${m[1]} does not exist on this network; fund it first`);
+    }
+    throw err;
+  }
 }

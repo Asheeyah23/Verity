@@ -1,9 +1,23 @@
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
-import type { TaskType } from "@verity/db";
+import type { SubmissionStatus, TaskType } from "@verity/db";
 import { db } from "../../db.js";
 import { env } from "../../config/env.js";
 import { getGateConfig } from "../../chain/config.js";
+
+/** A retrieval submission gets a full quorum only when it was actually escalated:
+ * its spot-check mismatched, a challenge was opened, or the agent was flagged. */
+export function needsFullQuorum(sub: {
+  task_type: TaskType;
+  status: SubmissionStatus;
+  full_replay_requested_at?: Date | string | null;
+}): boolean {
+  return (
+    sub.task_type === "deterministic" ||
+    sub.status === "disputed" ||
+    sub.full_replay_requested_at != null
+  );
+}
 
 /** The contract's live voting rules, as far as assignment needs them. */
 async function votingRules(): Promise<{ quorum: number; allowlist: boolean }> {
@@ -128,6 +142,14 @@ export async function escalateToFullReplay(submissionId: string) {
     .where("id", "=", submissionId)
     .executeTakeFirst();
   if (!sub?.chain_submission_id) return;
+  if (!sub.full_replay_requested_at) {
+    await db
+      .updateTable("submission")
+      .set({ full_replay_requested_at: new Date() })
+      .where("id", "=", submissionId)
+      .where("full_replay_requested_at", "is", null)
+      .execute();
+  }
   await assignReplayJobs({
     submissionId: sub.id,
     chainSubmissionId: sub.chain_submission_id,
@@ -163,7 +185,7 @@ export async function escalateAgentPendingSubmissions(agentId: string, exceptSub
 export async function topUpAssignments(): Promise<number> {
   const open = await db
     .selectFrom("submission")
-    .select(["id", "chain_submission_id", "task_type", "status"])
+    .select(["id", "chain_submission_id", "task_type", "status", "full_replay_requested_at"])
     .where("status", "in", ["pending", "disputed"])
     .where("chain_submission_id", "is not", null)
     // Once the window has closed on an unchallenged submission the sweep
@@ -192,10 +214,8 @@ export async function topUpAssignments(): Promise<number> {
       ])
       .where("submission_id", "=", sub.id)
       .executeTakeFirst();
-    const needsFullQuorum =
-      sub.task_type === "deterministic" || sub.status === "disputed" || Number(replays?.total ?? 0) > 0;
 
-    if (needsFullQuorum) {
+    if (needsFullQuorum(sub)) {
       const working = Number(replays?.confirmed ?? 0) + Number(replays?.fresh ?? 0);
       added += await assignNext("replay", sub.id, seed, allowlist, quorum - working);
       continue;

@@ -1,19 +1,23 @@
 import { scValToNative } from "@stellar/stellar-sdk";
 import { sql } from "kysely";
+import type { ChallengeRecord, SubmissionRecord } from "escrow-gate";
 import { db } from "../db.js";
 import { env } from "../config/env.js";
 import { server } from "../chain/rpc.js";
 import {
   consensusOutcome,
   finalizeOnChain,
+  minChallengerBond,
+  readChallenge,
   readSubmission,
   releaseAttestationLockOnChain,
   resolveChallengeOnChain,
 } from "../chain/actions.js";
-import { fromChainVerdict, fromChainResolutionMethod } from "../chain/mappers.js";
+import { challengeResolutionMethod, fromChainResolution, fromChainResolutionMethod, fromChainVerdict } from "../chain/mappers.js";
 import { recordTerminalVerdict } from "../modules/submissions/verdict.js";
 import { exportAttestation } from "../modules/attestations/export.js";
-import { topUpAssignments } from "../modules/reexecutors/assignment.js";
+import { escalateToFullReplay, topUpAssignments } from "../modules/reexecutors/assignment.js";
+import { dispatchWebhook } from "../modules/webhooks/dispatcher.js";
 import type { ChainTxStatus } from "../modules/submissions/supersede.js";
 import { adoptSubmission, maybeEarlyFinalize } from "./indexer.js";
 import { decideDraftPurge } from "./draft-purge.js";
@@ -421,6 +425,149 @@ export async function purgeDraftsOnce(): Promise<number> {
   return deleted;
 }
 
+export function shouldCheckOnChainChallenge(params: {
+  status: string;
+  submittedAtMs: number;
+  challengeWindowMs: number;
+  hasConfirmedVotes: boolean;
+  hasChallengeRow: boolean;
+  nowMs?: number;
+}): boolean {
+  const { status, submittedAtMs, challengeWindowMs, hasConfirmedVotes, hasChallengeRow, nowMs = Date.now() } = params;
+  if (status === "pending") {
+    const isPastWindow = nowMs >= submittedAtMs + challengeWindowMs;
+    return isPastWindow || hasConfirmedVotes;
+  }
+  if (status === "disputed") {
+    return !hasChallengeRow;
+  }
+  return false;
+}
+
+export function submissionRepairPatch(
+  row: {
+    submitted_at: Date | null;
+    challenge_window_s: number;
+    min_challenger_bond: string | null;
+  },
+  record: SubmissionRecord
+): {
+  submitted_at?: Date;
+  challenge_window_s?: number;
+  min_challenger_bond?: string;
+} | null {
+  const expectedSubmittedAt = new Date(Number(record.submitted_at) * 1000);
+  const expectedWindowS = Number(record.challenge_window_s);
+  const expectedMinBond = minChallengerBond(record).toString();
+
+  const patch: {
+    submitted_at?: Date;
+    challenge_window_s?: number;
+    min_challenger_bond?: string;
+  } = {};
+
+  if (!row.submitted_at || row.submitted_at.getTime() !== expectedSubmittedAt.getTime()) {
+    patch.submitted_at = expectedSubmittedAt;
+  }
+  if (row.challenge_window_s !== expectedWindowS) {
+    patch.challenge_window_s = expectedWindowS;
+  }
+  if (row.min_challenger_bond !== expectedMinBond) {
+    patch.min_challenger_bond = expectedMinBond;
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+export interface ChallengeDecisionInput {
+  submissionId: string;
+  status: string;
+  existingChallenge: { id: string; resolved_at: Date | null } | null;
+  chainChallenge: ChallengeRecord | null;
+  now?: Date;
+}
+
+export type ChallengeDecision =
+  | {
+      action: "insert";
+      values: {
+        submission_id: string;
+        challenger_account: string;
+        challenger_bond: string;
+        opened_at: Date;
+        chain_tx_hash: null;
+        resolution?: "upheld" | "rejected";
+        resolution_method?: "reexecution_consensus" | "zk_proof";
+        resolved_at?: Date;
+      };
+      markDisputed: boolean;
+      dispatchWebhook: boolean;
+    }
+  | {
+      action: "update";
+      values: {
+        resolution: "upheld" | "rejected";
+        resolution_method?: "reexecution_consensus" | "zk_proof";
+        resolved_at: Date;
+      };
+    }
+  | {
+      action: "none";
+    };
+
+export function reconcileChallengeDecision(input: ChallengeDecisionInput): ChallengeDecision {
+  const { submissionId, status, existingChallenge, chainChallenge, now = new Date() } = input;
+  if (!chainChallenge) {
+    return { action: "none" };
+  }
+
+  const resolution = fromChainResolution(chainChallenge.resolution);
+  const method = challengeResolutionMethod(chainChallenge.resolution_method);
+
+  if (!existingChallenge) {
+    const values: {
+      submission_id: string;
+      challenger_account: string;
+      challenger_bond: string;
+      opened_at: Date;
+      chain_tx_hash: null;
+      resolution?: "upheld" | "rejected";
+      resolution_method?: "reexecution_consensus" | "zk_proof";
+      resolved_at?: Date;
+    } = {
+      submission_id: submissionId,
+      challenger_account: chainChallenge.challenger,
+      challenger_bond: chainChallenge.bond.toString(),
+      opened_at: new Date(Number(chainChallenge.opened_at) * 1000),
+      chain_tx_hash: null,
+    };
+    if (resolution !== null) {
+      values.resolution = resolution;
+      if (method) values.resolution_method = method;
+      values.resolved_at = now;
+    }
+    return {
+      action: "insert",
+      values,
+      markDisputed: status === "pending",
+      dispatchWebhook: true,
+    };
+  }
+
+  if (existingChallenge.resolved_at === null && resolution !== null) {
+    return {
+      action: "update",
+      values: {
+        resolution,
+        resolution_method: method ?? undefined,
+        resolved_at: now,
+      },
+    };
+  }
+
+  return { action: "none" };
+}
+
 /** The chain is the source of truth and events can be missed (RPC event
  * retention is ~7 days; anyone may call finalize()/resolve_challenge()
  * directly). Re-read every still-open submission and adopt any terminal
@@ -428,7 +575,15 @@ export async function purgeDraftsOnce(): Promise<number> {
 export async function reconcileOnce(): Promise<number> {
   const open = await db
     .selectFrom("submission")
-    .select(["id", "chain_submission_id", "status"])
+    .select([
+      "id",
+      "chain_submission_id",
+      "status",
+      "submitted_at",
+      "challenge_window_s",
+      "min_challenger_bond",
+      "marketplace_id",
+    ])
     .where("status", "in", ["pending", "disputed"])
     .where("chain_submission_id", "is not", null)
     .execute();
@@ -437,11 +592,123 @@ export async function reconcileOnce(): Promise<number> {
   for (const row of open) {
     try {
       const record = await readSubmission(row.chain_submission_id!);
-      if (!record?.finalized) continue;
-      const status = fromChainVerdict(record.verdict);
-      if (status === row.status) continue;
-      await recordTerminalVerdict(row.id, status);
-      changed++;
+      if (!record) continue;
+
+      if (record.finalized) {
+        const status = fromChainVerdict(record.verdict);
+        if (status !== row.status) {
+          await recordTerminalVerdict(row.id, status);
+          changed++;
+        }
+        continue;
+      }
+
+      // Repair submitted_at / challenge_window_s / min_challenger_bond when they differ
+      const repairPatch = submissionRepairPatch(row, record);
+      if (repairPatch) {
+        await db
+          .updateTable("submission")
+          .set({ ...repairPatch, updated_at: new Date() })
+          .where("id", "=", row.id)
+          .execute();
+        if (repairPatch.submitted_at) row.submitted_at = repairPatch.submitted_at;
+        if (repairPatch.challenge_window_s !== undefined) row.challenge_window_s = repairPatch.challenge_window_s;
+        if (repairPatch.min_challenger_bond !== undefined) row.min_challenger_bond = repairPatch.min_challenger_bond;
+      }
+
+      let hasChallengeRow = false;
+      let existingChallenge: { id: string; resolved_at: Date | null } | null = null;
+
+      if (row.status === "disputed") {
+        const challengeInDb = await db
+          .selectFrom("challenge")
+          .select(["id", "resolved_at"])
+          .where("submission_id", "=", row.id)
+          .executeTakeFirst();
+        if (challengeInDb) {
+          hasChallengeRow = true;
+          existingChallenge = challengeInDb;
+        }
+      }
+
+      let hasConfirmedVotes = false;
+      if (row.status === "pending") {
+        const vote = await db
+          .selectFrom("replay")
+          .select("id")
+          .where("submission_id", "=", row.id)
+          .where("status", "=", "confirmed_onchain")
+          .executeTakeFirst();
+        hasConfirmedVotes = !!vote;
+      }
+
+      const shouldCheck = shouldCheckOnChainChallenge({
+        status: row.status,
+        submittedAtMs: Number(record.submitted_at) * 1000,
+        challengeWindowMs: Number(record.challenge_window_s) * 1000,
+        hasConfirmedVotes,
+        hasChallengeRow,
+      });
+
+      if (!shouldCheck) continue;
+
+      const chainChallenge = await readChallenge(row.chain_submission_id!);
+      if (!chainChallenge) continue;
+
+      if (row.status !== "disputed") {
+        const challengeInDb = await db
+          .selectFrom("challenge")
+          .select(["id", "resolved_at"])
+          .where("submission_id", "=", row.id)
+          .executeTakeFirst();
+        if (challengeInDb) {
+          existingChallenge = challengeInDb;
+        }
+      }
+
+      const decision = reconcileChallengeDecision({
+        submissionId: row.id,
+        status: row.status,
+        existingChallenge,
+        chainChallenge,
+      });
+
+      if (decision.action === "insert") {
+        const inserted = await db
+          .insertInto("challenge")
+          .values(decision.values)
+          .onConflict((oc) => oc.doNothing())
+          .returningAll()
+          .executeTakeFirst();
+
+        if (inserted) {
+          if (decision.markDisputed) {
+            await db
+              .updateTable("submission")
+              .set({ status: "disputed", updated_at: new Date() })
+              .where("id", "=", row.id)
+              .where("status", "=", "pending")
+              .execute();
+          }
+          await escalateToFullReplay(row.id);
+          if (decision.dispatchWebhook) {
+            await dispatchWebhook(row.marketplace_id, "submission.disputed", {
+              submission_id: row.id,
+              status: "disputed",
+              tx_hash: null,
+            }).catch((err) => console.error("[scheduler] webhook dispatch failed:", err));
+          }
+          changed++;
+        }
+      } else if (decision.action === "update") {
+        await db
+          .updateTable("challenge")
+          .set(decision.values)
+          .where("submission_id", "=", row.id)
+          .where("resolved_at", "is", null)
+          .execute();
+        changed++;
+      }
     } catch (err) {
       console.error(`[scheduler] reconcile failed for submission ${row.id}:`, err);
     }

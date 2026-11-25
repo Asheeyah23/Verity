@@ -12,7 +12,7 @@
     "smoke": "bash scripts/smoke.sh",
     "db:migrate": "pnpm --filter @verity/db migrate",
     "test:contracts": "cd contracts && cargo test",
-    "build": "pnpm -r build",
+    "build": "pnpm -r --if-present run build",
     "typecheck": "pnpm -r --if-present run typecheck",
     "db:reset": "pnpm --filter @verity/db reset",
     "lint": "pnpm --filter @verity/frontend lint"
