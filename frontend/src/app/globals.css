@@ -21,11 +21,14 @@
   --color-accent-fill-hover: #065f46;
   --color-on-accent: #ffffff;
 
+  --color-danger-fill: #be123c;
+  --color-danger-fill-hover: #9f1239;
+
   --color-status-verified: #10b981;
   --color-status-pending: #d97706;
   --color-status-disputed: #d97706;
-  --color-status-slashed: #e11d48;
-  --color-status-expired: #6b6b74;
+  --color-status-slashed: #fb7185;
+  --color-status-expired: #9a9aa4;
 }
 
 :root[data-theme="light"] {
@@ -45,6 +48,15 @@
   --color-accent-fill: #047857;
   --color-accent-fill-hover: #065f46;
   --color-on-accent: #ffffff;
+
+  --color-danger-fill: #be123c;
+  --color-danger-fill-hover: #9f1239;
+
+  --color-status-verified: #065f46;
+  --color-status-pending: #92400e;
+  --color-status-disputed: #92400e;
+  --color-status-slashed: #9f1239;
+  --color-status-expired: #585860;
 }
 
 html {

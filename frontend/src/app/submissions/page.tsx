@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { backendGet } from "../../lib/server-api";
-import type { Submission, SubmissionStatus } from "../../lib/types";
+import type { GateConfig, Submission, SubmissionStatus } from "../../lib/types";
 import { Card, CardBody } from "../../components/ui/card";
 import { VerdictBadge } from "../../components/verdict-badge";
 import { buttonClasses } from "../../components/ui/button";
 import { Pager, PAGE_SIZE, parsePage } from "../../components/pager";
 import { cn } from "../../lib/utils";
-import { stroopsToXlm, truncateMiddle, formatRelativeTime } from "../../lib/format";
+import { formatRelativeTime, formatUnits, resolveBondAsset, truncateMiddle } from "../../lib/format";
 
 export const metadata: Metadata = { title: "Submissions" };
 
@@ -39,8 +39,12 @@ export default async function SubmissionsPage({
     offset: String((page - 1) * PAGE_SIZE),
   });
   if (status) query.set("status", status);
-  const rows = await backendGet<Submission[]>(`/v1/submissions?${query}`);
+  const [rows, config] = await Promise.all([
+    backendGet<Submission[]>(`/v1/submissions?${query}`),
+    backendGet<GateConfig>("/v1/config"),
+  ]);
   const submissions = rows.slice(0, PAGE_SIZE);
+  const asset = resolveBondAsset(config.bond_asset);
 
   const hrefFor = (nextStatus: SubmissionStatus | null, nextPage = 1) => {
     const q = new URLSearchParams();
@@ -135,7 +139,9 @@ export default async function SubmissionsPage({
                       </p>
                     </div>
                     <div className="flex items-center gap-6">
-                      <p className="font-mono text-sm">{stroopsToXlm(s.bond_amount)} XLM bond</p>
+                      <p className="font-mono text-sm">
+                        {formatUnits(s.bond_amount, asset.decimals, asset.symbol)} bond
+                      </p>
                       <VerdictBadge status={s.status} resolutionMethod={s.resolution_method} compact align="end" />
                     </div>
                   </CardBody>

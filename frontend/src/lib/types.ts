@@ -147,12 +147,20 @@ export interface SubmissionDetail {
   has_attestation: boolean;
 }
 
+export interface BondAsset {
+  contract_id: string;
+  symbol: string;
+  decimals: number;
+}
+
 /** The rules this deployment's EscrowGate enforces, read from the contract.
- * Amounts are stroops. */
+ * Amounts are in base units of the bond asset. */
 export interface GateConfig {
   deployment: string;
   network_passphrase: string;
   escrow_gate_contract_id: string;
+  public_api_url: string;
+  bond_asset?: BondAsset | "native";
   min_stake_floor: string;
   quorum_min_reexecutors: number;
   quorum_supermajority_bps: number;
@@ -165,6 +173,7 @@ export interface GateConfig {
   reexecutor_slash_bps: number;
   reexecutor_allowlist: boolean;
   reexecutor_liveness_s: number;
+  artifact_max_bytes?: number;
 }
 
 export interface Attestation {

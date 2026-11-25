@@ -5,7 +5,7 @@ import { requireAuth } from "../../auth/plugin.js";
 import { db } from "../../db.js";
 import { env } from "../../config/env.js";
 import { escrowGateFor, escrowGateAsKeeper } from "../../chain/clients.js";
-import { assertGateCall, relaySignedXdr } from "../../chain/rpc.js";
+import { assertGateCall, assertSimulated, buildWithAccountCheck, relaySignedXdr } from "../../chain/rpc.js";
 import { getGateConfig } from "../../chain/config.js";
 
 const positiveStroops = z.string().regex(/^[1-9]\d*$/, "must be a positive integer amount in stroops");
@@ -91,13 +91,16 @@ export async function reexecutorsRoutes(app: FastifyInstance) {
     const body = z.object({ stake_amount: positiveStroops }).parse(req.body);
     const account = req.stellarAccount!;
 
-    // Build (and simulate) before touching the DB, so a stake the contract
+    // Build and simulate before touching the DB, so a stake the contract
     // would reject never leaves a phantom re-executor row behind.
     const client = escrowGateFor(account);
-    const assembled = await client.register_reexecutor({
-      reexecutor: account,
-      stake_amount: BigInt(body.stake_amount),
-    });
+    const assembled = await buildWithAccountCheck(() =>
+      client.register_reexecutor({
+        reexecutor: account,
+        stake_amount: BigInt(body.stake_amount),
+      })
+    );
+    assertSimulated(assembled);
     const unsignedXdr = assembled.toXDR();
 
     // onConflict, not select-then-insert: a double submit would otherwise
@@ -135,10 +138,13 @@ export async function reexecutorsRoutes(app: FastifyInstance) {
       reply.code(403);
       return { error: "forbidden" };
     }
-    const assembled = await escrowGateFor(row.stellar_account).withdraw_stake({
-      reexecutor: row.stellar_account,
-      amount: BigInt(body.amount),
-    });
+    const assembled = await buildWithAccountCheck(() =>
+      escrowGateFor(row.stellar_account).withdraw_stake({
+        reexecutor: row.stellar_account,
+        amount: BigInt(body.amount),
+      })
+    );
+    assertSimulated(assembled);
     reply.code(201);
     return { reexecutor: row, unsigned_transaction_xdr: assembled.toXDR() };
   });

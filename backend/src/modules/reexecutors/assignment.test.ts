@@ -15,7 +15,7 @@ Object.assign(process.env, {
   HOME_DOMAIN: "localhost",
 });
 
-const { assignmentSeed, rankBySeed, replayWantCount } = await import("./assignment.js");
+const { assignmentSeed, rankBySeed, replayWantCount, needsFullQuorum } = await import("./assignment.js");
 
 test("assignmentSeed produces deterministic sha256 golden vector", () => {
   const seed = assignmentSeed("11111111-1111-1111-1111-111111111111", "7");
@@ -81,4 +81,32 @@ test("replayWantCount calculates seat requirements correctly", () => {
   assert.equal(replayWantCount(3, 1, 0), 4);
   assert.equal(replayWantCount(3, 1, 4), 0);
   assert.equal(replayWantCount(3, 1, 5), -1);
+});
+
+test("needsFullQuorum returns true for deterministic tasks", () => {
+  assert.equal(
+    needsFullQuorum({ task_type: "deterministic", status: "pending", full_replay_requested_at: null }),
+    true
+  );
+});
+
+test("needsFullQuorum returns true for disputed submissions regardless of task type", () => {
+  assert.equal(
+    needsFullQuorum({ task_type: "retrieval", status: "disputed", full_replay_requested_at: null }),
+    true
+  );
+});
+
+test("needsFullQuorum returns true when full_replay_requested_at is set", () => {
+  assert.equal(
+    needsFullQuorum({ task_type: "retrieval", status: "pending", full_replay_requested_at: new Date() }),
+    true
+  );
+});
+
+test("needsFullQuorum returns false for non-escalated retrieval submission", () => {
+  assert.equal(
+    needsFullQuorum({ task_type: "retrieval", status: "pending", full_replay_requested_at: null }),
+    false
+  );
 });

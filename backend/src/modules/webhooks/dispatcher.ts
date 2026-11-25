@@ -154,6 +154,11 @@ export async function deliver(
   }
 }
 
+export interface DispatchWebhookDeps {
+  db?: typeof db;
+  deliver?: typeof deliver;
+}
+
 /**
  * Dispatches webhook events for a marketplace without blocking caller loops.
  *
@@ -164,8 +169,15 @@ export async function deliver(
  * If the process exits while deliveries are in flight, their rows stay `pending`
  * (webhooks are delivered once with no retry).
  */
-export async function dispatchWebhook(marketplaceId: string, eventType: string, payload: unknown): Promise<void> {
-  const subs = await db
+export async function dispatchWebhook(
+  marketplaceId: string,
+  eventType: string,
+  payload: unknown,
+  deps: DispatchWebhookDeps = {}
+): Promise<void> {
+  const database = deps.db ?? db;
+  const send = deps.deliver ?? deliver;
+  const subs = await database
     .selectFrom("webhook_subscription")
     .selectAll()
     .where("marketplace_id", "=", marketplaceId)
@@ -180,7 +192,7 @@ export async function dispatchWebhook(marketplaceId: string, eventType: string, 
   // Trigger deliveries concurrently without awaiting network completion
   void Promise.allSettled(
     matching.map((sub) =>
-      deliver(sub, eventType, payload).catch((err) => {
+      send(sub, eventType, payload).catch((err) => {
         console.error(`[webhook] unhandled error delivering event ${eventType} to subscription ${sub.id}:`, err);
       })
     )

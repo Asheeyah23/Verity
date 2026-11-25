@@ -83,6 +83,13 @@ export function fromChainResolutionMethod(v: unknown): SubmissionResolutionMetho
   }
 }
 
+/** A challenge row only ever records a resolution the contract accepted;
+ * anything else (None, or a method this deployment cannot use) stays null. */
+export function challengeResolutionMethod(v: unknown): "reexecution_consensus" | "zk_proof" | null {
+  const method = fromChainResolutionMethod(v);
+  return method === "reexecution_consensus" || method === "zk_proof" ? method : null;
+}
+
 /** Deterministic 32-byte content address, matching what the contract expects
  * for BytesN<32> fields (escrow_ref/input_hash/output_hash). */
 export function sha256Bytes(input: string | Buffer): Buffer {

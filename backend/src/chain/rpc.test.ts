@@ -29,7 +29,8 @@ Object.assign(process.env, {
   HOME_DOMAIN: "localhost",
 });
 
-const { parseGateCall, assertGateCall } = await import("./rpc.js");
+const { parseGateCall, assertGateCall, assertSimulated, buildWithAccountCheck } = await import("./rpc.js");
+const { contractErrorName } = await import("./actions.js");
 const { HttpError } = await import("../http-error.js");
 
 function expectHttpError(
@@ -432,5 +433,113 @@ describe("assertGateCall", () => {
     });
     assert.equal(res.fn, "challenge");
     assert.equal(res.args[1], 42n);
+  });
+});
+
+describe("assertSimulated", () => {
+  it("accepts a successful simulation", () => {
+    const assembled = {
+      simulation: {
+        transactionData: {} as any,
+        minResourceFee: "100",
+        events: [],
+        results: [],
+      } as any,
+    };
+    assert.doesNotThrow(() => assertSimulated(assembled));
+  });
+
+  it("throws 422 if simulation is missing", () => {
+    expectHttpError(
+      () => assertSimulated({} as any),
+      422,
+      "simulation missing from assembled transaction"
+    );
+  });
+
+  it("throws contract error when simulation fails with contract error code", () => {
+    const assembled = {
+      simulation: {
+        error: "HostError: Error(Contract, #11)",
+      } as any,
+    };
+    assert.throws(
+      () => assertSimulated(assembled),
+      (e: unknown) => {
+        assert.ok(e instanceof Error);
+        assert.equal(contractErrorName(e), "BondTooLow");
+        return true;
+      }
+    );
+  });
+
+  it("throws HttpError 422 for non-contract simulation error", () => {
+    const assembled = {
+      simulation: {
+        error: "HostError: Error(Budget, ExceededLimit)",
+      } as any,
+    };
+    expectHttpError(
+      () => assertSimulated(assembled),
+      422,
+      "simulation failed: HostError: Error(Budget, ExceededLimit)"
+    );
+  });
+
+  it("throws HttpError 409 when simulation reports restore needed", () => {
+    const assembled = {
+      simulation: {
+        transactionData: {} as any,
+        restorePreamble: {
+          transactionData: {} as any,
+          minResourceFee: "100",
+        },
+      } as any,
+    };
+    expectHttpError(
+      () => assertSimulated(assembled),
+      409,
+      "contract state expired and needs restoring"
+    );
+  });
+});
+
+describe("buildWithAccountCheck", () => {
+  it("returns function result on success", async () => {
+    const result = await buildWithAccountCheck(async () => 123);
+    assert.equal(result, 123);
+  });
+
+  it("maps Account not found to HttpError 400 with helpful message", async () => {
+    const account = "GBZXN7PIRZGNMHGA72W2M2UMQLF5RHYU3D3B3PFFXGG3QFF4TGG6A62V";
+    await assert.rejects(
+      () =>
+        buildWithAccountCheck(async () => {
+          throw new Error(`Account not found: ${account}`);
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof HttpError);
+        assert.equal(err.statusCode, 400);
+        assert.equal(
+          err.message,
+          `account ${account} does not exist on this network; fund it first`
+        );
+        return true;
+      }
+    );
+  });
+
+  it("rethrows other errors unchanged", async () => {
+    await assert.rejects(
+      () =>
+        buildWithAccountCheck(async () => {
+          throw new Error("unrelated error");
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal((err as Error).message, "unrelated error");
+        return true;
+      }
+    );
   });
 });

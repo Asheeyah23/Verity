@@ -1,8 +1,32 @@
-import type { SubmissionRecord } from "escrow-gate";
+import type { ChallengeRecord, SubmissionRecord } from "escrow-gate";
 import { Errors } from "escrow-gate";
+import { env } from "../config/env.js";
 import { escrowGateAsKeeper } from "./clients.js";
 import { withKeeperLock } from "./keeper.js";
 import { fromChainVerdict } from "./mappers.js";
+
+function isTransactionStillPending(err: unknown): boolean {
+  if (!err) return false;
+  const name = (err as { name?: string }).name;
+  if (name === "TransactionStillPendingError" || name === "TransactionStillPending") return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("TransactionStillPending") || msg.includes("for transaction to complete, but it did not");
+}
+
+async function signAndSendKeeperTx<T>(tx: any): Promise<T> {
+  try {
+    return await tx.signAndSend();
+  } catch (err) {
+    if (isTransactionStillPending(err)) {
+      const hash =
+        (typeof tx.signed?.hash === "function" ? tx.signed.hash().toString("hex") : null) ??
+        tx.sendTransactionResponse?.hash ??
+        (/"hash":\s*"([0-9a-fA-F]{64})"/.exec(err instanceof Error ? err.message : "")?.[1] ?? "unknown");
+      console.error(`[keeper] transaction still pending after ${env.KEEPER_TX_TIMEOUT_S}s: txHash=${hash}`);
+    }
+    throw err;
+  }
+}
 
 /** Maps "Error(Contract, #11)" in an SDK/RPC error message back to the
  * contract's own error name (BondTooLow), or null if it isn't one. */
@@ -16,6 +40,11 @@ export function contractErrorName(err: unknown): string | null {
 
 export async function readSubmission(chainSubmissionId: string): Promise<SubmissionRecord | null> {
   const tx = await escrowGateAsKeeper.get_submission({ id: BigInt(chainSubmissionId) });
+  return tx.result ?? null;
+}
+
+export async function readChallenge(chainSubmissionId: string): Promise<ChallengeRecord | null> {
+  const tx = await escrowGateAsKeeper.get_challenge({ id: BigInt(chainSubmissionId) });
   return tx.result ?? null;
 }
 
@@ -51,11 +80,14 @@ export interface KeeperTxResult {
  * the SDK refuses to sign and send; the simulated verdict is the answer. */
 export function finalizeOnChain(chainSubmissionId: string): Promise<KeeperTxResult> {
   return withKeeperLock(async () => {
-    const tx = await escrowGateAsKeeper.finalize({ submission_id: BigInt(chainSubmissionId) });
+    const tx = await escrowGateAsKeeper.finalize(
+      { submission_id: BigInt(chainSubmissionId) },
+      { timeoutInSeconds: env.KEEPER_TX_TIMEOUT_S }
+    );
     if (tx.isReadCall) {
       return { status: fromChainVerdict(tx.result.unwrap()), txHash: null };
     }
-    const sent = await tx.signAndSend();
+    const sent = await signAndSendKeeperTx<any>(tx);
     return {
       status: fromChainVerdict(sent.result.unwrap()),
       txHash: sent.sendTransactionResponse?.hash ?? null,
@@ -65,12 +97,15 @@ export function finalizeOnChain(chainSubmissionId: string): Promise<KeeperTxResu
 
 export function resolveChallengeOnChain(chainSubmissionId: string): Promise<KeeperTxResult> {
   return withKeeperLock(async () => {
-    const tx = await escrowGateAsKeeper.resolve_challenge({
-      submission_id: BigInt(chainSubmissionId),
-      // The only method the contract accepts in Phase 1.
-      method: { tag: "ReexecutionConsensus", values: void 0 },
-    });
-    const sent = await tx.signAndSend();
+    const tx = await escrowGateAsKeeper.resolve_challenge(
+      {
+        submission_id: BigInt(chainSubmissionId),
+        // The only method the contract accepts in Phase 1.
+        method: { tag: "ReexecutionConsensus", values: void 0 },
+      },
+      { timeoutInSeconds: env.KEEPER_TX_TIMEOUT_S }
+    );
+    const sent = await signAndSendKeeperTx<any>(tx);
     return {
       status: fromChainVerdict(sent.result.unwrap()),
       txHash: sent.sendTransactionResponse?.hash ?? null,
@@ -86,11 +121,14 @@ export function resolveChallengeOnChain(chainSubmissionId: string): Promise<Keep
 export function releaseAttestationLockOnChain(chainSubmissionId: string, reexecutor: string): Promise<string | null> {
   return withKeeperLock(async () => {
     try {
-      const tx = await escrowGateAsKeeper.release_attestation_lock({
-        submission_id: BigInt(chainSubmissionId),
-        reexecutor,
-      });
-      const sent = await tx.signAndSend();
+      const tx = await escrowGateAsKeeper.release_attestation_lock(
+        {
+          submission_id: BigInt(chainSubmissionId),
+          reexecutor,
+        },
+        { timeoutInSeconds: env.KEEPER_TX_TIMEOUT_S }
+      );
+      const sent = await signAndSendKeeperTx<any>(tx);
       sent.result.unwrap();
       return sent.sendTransactionResponse?.hash ?? null;
     } catch (err) {

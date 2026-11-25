@@ -71,3 +71,22 @@ test("a failure after a recovery is reported again", async () => {
   hb.stop();
   assert.deepEqual(errors, ["down 1", "down 3"]);
 });
+
+test("can be stopped and restarted without duplicating the timer", async () => {
+  let beats = 0;
+  const hb = startHeartbeat(async () => void beats++, 10);
+  await waitFor(() => beats >= 2, "initial beats");
+  hb.stop();
+  hb.stop();
+  const pausedAt = beats;
+  await sleep(50);
+  assert.equal(beats, pausedAt);
+
+  hb.start();
+  hb.start();
+  await waitFor(() => beats >= pausedAt + 2, "beats after restart");
+  hb.stop();
+  const stoppedAgainAt = beats;
+  await sleep(50);
+  assert.equal(beats, stoppedAgainAt);
+});
