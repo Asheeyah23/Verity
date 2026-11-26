@@ -5,10 +5,17 @@ import Link from "next/link";
 import { useWallet } from "../../../components/wallet-provider";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button, buttonClasses } from "../../../components/ui/button";
-import { registerReexecutor, relayReexecutorStake } from "../../../lib/client-api";
+import { LiveStatus } from "../../../components/live-status";
+import { registerReexecutor, relayReexecutorStake, ActionTimeoutError } from "../../../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
-import { NETWORK_PASSPHRASE, TESTNET_EXPLORER_TX } from "../../../lib/config";
-import { formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../../../lib/format";
+import { NETWORK_PASSPHRASE, explorerUrl } from "../../../lib/config";
+import {
+  formatUnits,
+  mapTrustlineError,
+  parseUnits,
+  resolveBondAsset,
+  trustlineNote,
+} from "../../../lib/format";
 import type { GateConfig } from "../../../lib/types";
 
 type Status = "idle" | "checking" | "building" | "signing" | "relaying" | "done" | "error";
@@ -24,6 +31,7 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
   );
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [result, setResult] = useState<{ id: string; txHash: string; stake: bigint } | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -51,6 +59,18 @@ pnpm --filter @verity/reexecutor-agent start`;
     setTimeout(() => setCopied(false), 2000);
   }
 
+  const busy = status === "checking" || status === "building" || status === "signing" || status === "relaying";
+  const stepLabel =
+    status === "checking"
+      ? "Checking Freighter..."
+      : status === "building"
+        ? "Building transaction..."
+        : status === "signing"
+          ? "Awaiting signature in Freighter..."
+          : status === "relaying"
+            ? "Submitting to testnet..."
+            : "Stake and register";
+
   async function handleRegister() {
     if (!account || !networkOk) return;
     setError(null);
@@ -68,7 +88,7 @@ pnpm --filter @verity/reexecutor-agent start`;
 
       setStatus("signing");
       const signed = await signXdr(unsigned_transaction_xdr, {
-        networkPassphrase: config.network_passphrase,
+        networkPassphrase: config.network_passphrase || NETWORK_PASSPHRASE,
         address: account,
       });
 
@@ -81,6 +101,11 @@ pnpm --filter @verity/reexecutor-agent start`;
         reportWrongNetwork(err.message);
         setStatus("idle");
         return;
+      }
+      if (err instanceof ActionTimeoutError) {
+        setOutcomeUnknown(true);
+      } else {
+        setOutcomeUnknown(false);
       }
       setError(err instanceof Error ? mapTrustlineError(err, asset.symbol) : "Registration failed.");
       setStatus("error");
@@ -135,6 +160,7 @@ pnpm --filter @verity/reexecutor-agent start`;
           <h2 className="font-medium">Stake</h2>
         </CardHeader>
         <CardBody className="space-y-4">
+          <LiveStatus message={busy ? stepLabel : ""} />
           {status === "done" && result ? (
             <div className="space-y-3 text-sm" role="status">
               <p className="text-status-verified">
@@ -152,7 +178,7 @@ pnpm --filter @verity/reexecutor-agent start`;
                   View your re-executor page
                 </Link>
                 <a
-                  href={TESTNET_EXPLORER_TX(result.txHash)}
+                  href={explorerUrl("tx", result.txHash, config.network_passphrase)}
                   target="_blank"
                   rel="noreferrer"
                   className="text-accent underline-offset-2 hover:underline"
@@ -186,25 +212,30 @@ pnpm --filter @verity/reexecutor-agent start`;
               </div>
 
               {displayError && (
-                <p role="alert" className="text-sm text-status-slashed">
-                  {displayError}
-                </p>
+                <div role="alert" className="text-sm text-status-slashed space-y-2">
+                  <p>{displayError}</p>
+                  {outcomeUnknown && account && (
+                    <p className="text-xs">
+                      The transaction may still be on-chain. Check your account on stellar.expert:{" "}
+                      <a
+                        href={explorerUrl("account", account, config.network_passphrase)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-accent underline-offset-2 hover:underline"
+                      >
+                        {account.slice(0, 6)}…{account.slice(-4)}
+                      </a>
+                    </p>
+                  )}
+                </div>
               )}
 
               {account ? (
-                <Button onClick={handleRegister} disabled={(status !== "idle" && status !== "error") || !networkOk}>
-                  {status === "checking"
-                    ? "Checking Freighter..."
-                    : status === "building"
-                      ? "Building transaction..."
-                      : status === "signing"
-                        ? "Awaiting signature in Freighter..."
-                        : status === "relaying"
-                          ? "Submitting to testnet..."
-                          : "Stake and register"}
+                <Button onClick={handleRegister} disabled={busy || !networkOk} aria-busy={busy}>
+                  {stepLabel}
                 </Button>
               ) : (
-                <Button onClick={login} disabled={connecting}>
+                <Button onClick={login} disabled={connecting} aria-busy={connecting}>
                   {connecting ? "Connecting..." : "Connect wallet to continue"}
                 </Button>
               )}

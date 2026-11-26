@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/sandbox/replay-worker.mjs', 'dist/sandbox/replay-worker.mjs')\"",
     "start": "tsx src/index.ts",
     "once": "tsx src/index.ts --once",
     "test": "tsx --test \"src/**/*.test.ts\"",

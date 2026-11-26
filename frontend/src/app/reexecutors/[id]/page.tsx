@@ -7,8 +7,13 @@ import type { GateConfig, Reexecutor, SlashingEvent } from "../../../lib/types";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { ReexecutorStatus, reexecutorStanding } from "../../../components/reexecutor-status";
 import { WithdrawStake } from "../../../components/withdraw-stake";
-import { formatRelativeTime, formatUnits, resolveBondAsset, truncateMiddle } from "../../../lib/format";
-import { TESTNET_EXPLORER_ACCOUNT, TESTNET_EXPLORER_TX } from "../../../lib/config";
+import {
+  formatRelativeTime,
+  formatUnits,
+  resolveBondAsset,
+  truncateMiddle,
+} from "../../../lib/format";
+import { explorerUrl } from "../../../lib/config";
 
 const loadReexecutorDetail = cache((id: string) =>
   backendGetOrNull<{ reexecutor: Reexecutor; slashing_events: SlashingEvent[] }>(
@@ -60,7 +65,7 @@ export default async function ReexecutorDetailPage({
           </Link>
           <h1 className="mt-2 font-mono text-xl">{truncateMiddle(reexecutor.stellar_account, 8, 8)}</h1>
           <a
-            href={TESTNET_EXPLORER_ACCOUNT(reexecutor.stellar_account)}
+            href={explorerUrl("account", reexecutor.stellar_account, config.network_passphrase)}
             target="_blank"
             rel="noreferrer"
             className="text-xs text-accent underline-offset-2 hover:underline"
@@ -144,7 +149,7 @@ export default async function ReexecutorDetailPage({
                     </p>
                     {event.tx_hash && (
                       <a
-                        href={TESTNET_EXPLORER_TX(event.tx_hash)}
+                        href={explorerUrl("tx", event.tx_hash, config.network_passphrase)}
                         target="_blank"
                         rel="noreferrer"
                         className="text-xs text-accent underline-offset-2 hover:underline"

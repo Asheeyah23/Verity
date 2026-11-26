@@ -1,0 +1,99 @@
+name: Re-executor image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reexecutor-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish re-executor image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build native image for verification
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: reexecutor-agent/Dockerfile
+          load: true
+          tags: verity-reexecutor:verify
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify runtime image contents, replay hash and secret-file startup
+        run: |
+          test "$(docker run --rm verity-reexecutor:verify ls node_modules | grep -c '^tsx$' || true)" -eq 0
+          test "$(docker run --rm verity-reexecutor:verify ls node_modules | grep -c '^typescript$' || true)" -eq 0
+          QUICKJS_VERSION="$(node -p 'require("./reexecutor-agent/package.json").dependencies["quickjs-emscripten"]')"
+          docker run --rm -e QUICKJS_VERSION="$QUICKJS_VERSION" verity-reexecutor:verify node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { REPLAY_ENGINE, runDeterministicFunction } from "./dist/sandbox/runner.js";
+            const prefix = `quickjs-emscripten@${process.env.QUICKJS_VERSION} (wasm sandbox, worker-isolated, fuel=`;
+            assert.ok(REPLAY_ENGINE.startsWith(prefix), REPLAY_ENGINE);
+            assert.match(REPLAY_ENGINE, /, fuel=\d+, wasm=sha256:[0-9a-f]{64}\)$/);
+            const res = await runDeterministicFunction("return { doubled: input.n * 2 };", { n: 21 });
+            assert.deepEqual(res.output, { doubled: 42 });
+            assert.equal(res.outputHash, "27d4958085af3032ba46babb9e0b71690f9e2cc745ff7bb403a3d54e12152f82");
+          '
+          if docker run --rm -e ESCROW_GATE_CONTRACT_ID=CDUMMY000000000000000000000000000000000000000000000000000000 -e REEXECUTOR_SECRET_KEY=S1 -e REEXECUTOR_SECRET_KEY_FILE=/run/secrets/rex verity-reexecutor:verify 2>&1 | grep -q "not both"; then
+            true
+          else
+            echo "::error::Expected startup failure when both REEXECUTOR_SECRET_KEY and REEXECUTOR_SECRET_KEY_FILE are set"
+            exit 1
+          fi
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract OCI metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/verity-reexecutor
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=ref,event=branch
+            type=sha
+            type=sha,prefix=,format=long
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: reexecutor-agent/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

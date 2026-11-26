@@ -10,6 +10,7 @@ import { useWallet } from "../wallet-provider";
 import { truncateMiddle } from "../../lib/format";
 import { FREIGHTER_INSTALL_URL } from "../../lib/config";
 import { Button } from "../ui/button";
+import { LiveStatus } from "../live-status";
 
 const LINKS = [
   { href: "/submissions", label: "Submissions" },
@@ -60,6 +61,7 @@ export function Nav() {
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
           <ThemeToggle />
+          <LiveStatus message={connecting ? "Connecting..." : ""} />
           {account ? (
             <div className="flex items-center gap-2">
               <span className="hidden font-mono text-xs text-text-secondary sm:inline">
@@ -70,7 +72,7 @@ export function Nav() {
               </Button>
             </div>
           ) : (
-            <Button variant="primary" onClick={login} disabled={connecting}>
+            <Button variant="primary" onClick={login} disabled={connecting} aria-busy={connecting}>
               {connecting ? "Connecting..." : "Connect wallet"}
             </Button>
           )}

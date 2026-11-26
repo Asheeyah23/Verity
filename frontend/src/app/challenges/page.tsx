@@ -6,7 +6,7 @@ import { Card, CardBody } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
 import { Pager, PAGE_SIZE, parsePage } from "../../components/pager";
 import { formatRelativeTime, formatUnits, resolveBondAsset, truncateMiddle } from "../../lib/format";
-import { TESTNET_EXPLORER_TX } from "../../lib/config";
+import { explorerUrl } from "../../lib/config";
 
 export const metadata: Metadata = { title: "Challenges" };
 
@@ -94,7 +94,7 @@ export default async function ChallengesPage({
                       <Badge tone={o.tone}>{o.label}</Badge>
                       {c.chain_tx_hash && (
                         <a
-                          href={TESTNET_EXPLORER_TX(c.chain_tx_hash)}
+                          href={explorerUrl("tx", c.chain_tx_hash, config.network_passphrase)}
                           target="_blank"
                           rel="noreferrer"
                           className="text-xs text-accent underline-offset-2 hover:underline"

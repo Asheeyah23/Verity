@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import type { SubmissionStatus, TaskType } from "@verity/db";
+import type { ConfigRecord } from "escrow-gate";
 import { db } from "../../db.js";
 import { env } from "../../config/env.js";
 import { getGateConfig } from "../../chain/config.js";
@@ -19,10 +20,51 @@ export function needsFullQuorum(sub: {
   );
 }
 
+/** The contract's live rules for who may cast a counting vote. */
+export interface VoteEligibility {
+  allowlist: boolean;
+  /** EscrowGate's current min_stake_floor (i128, in stroops). */
+  minStakeFloor: bigint;
+}
+
+/** The vote-eligibility part of EscrowGate's live config. */
+export function eligibilityFrom(
+  cfg: Pick<ConfigRecord, "reexecutor_allowlist" | "min_stake_floor">
+): VoteEligibility {
+  return { allowlist: cfg.reexecutor_allowlist, minStakeFloor: BigInt(cfg.min_stake_floor) };
+}
+
 /** The contract's live voting rules, as far as assignment needs them. */
-async function votingRules(): Promise<{ quorum: number; allowlist: boolean }> {
+async function votingRules(): Promise<{ quorum: number; eligibility: VoteEligibility }> {
   const cfg = await getGateConfig();
-  return { quorum: Number(cfg.quorum_min_reexecutors), allowlist: cfg.reexecutor_allowlist };
+  return { quorum: Number(cfg.quorum_min_reexecutors), eligibility: eligibilityFrom(cfg) };
+}
+
+/** Parses a mirrored `numeric` stake into a bigint. Anything that is not a
+ * whole number of stroops is treated as unknown (null), never as zero. */
+function parseStake(stake: string | bigint): bigint | null {
+  if (typeof stake === "bigint") return stake;
+  const m = /^\s*(-?\d+)(?:\.0*)?\s*$/.exec(stake);
+  return m ? BigInt(m[1]) : null;
+}
+
+/**
+ * Whether a re-executor row can cast a vote the contract will count, judged by
+ * the contract's *current* rules. The mirrored `active` flag alone is not
+ * enough: the contract recomputes it only when stake changes, so after an admin
+ * raises min_stake_floor an account below the new floor still reads
+ * `active = true`, yet attest_replay rejects it (`stake_amount <
+ * min_stake_floor`). The comparison is done in bigint, so i128 values above
+ * 2^53 compare exactly.
+ */
+export function canCastVote(
+  row: { active: boolean; approved: boolean; stake_amount: string | bigint },
+  rules: VoteEligibility
+): boolean {
+  if (!row.active) return false;
+  if (rules.allowlist && !row.approved) return false;
+  const stake = parseStake(row.stake_amount);
+  return stake !== null && stake >= rules.minStakeFloor;
 }
 
 export function assignmentSeed(submissionId: string, chainSubmissionId: string): string {
@@ -38,23 +80,28 @@ export function rankBySeed<T extends { stellar_account: string }>(seed: string, 
 
 /**
  * Re-executors that can actually cast a counting vote right now, in this
- * submission's deterministic order: staked above the floor, approved when the
- * contract runs an allow-list, and with a worker that polled for work
- * recently. Ranking is by sha256(seed + account); the seed is stored on each
- * replay row so anyone can reproduce the selection.
+ * submission's deterministic order: staked at or above the contract's live
+ * min_stake_floor, approved when the contract runs an allow-list, and with a
+ * worker that polled for work recently. Ranking is by sha256(seed + account);
+ * the seed is stored on each replay row so anyone can reproduce the selection.
  *
  * Liveness matters because an assignment is a claim on a quorum seat: handing
  * one to an account that staked but runs no worker costs the submission its
  * consensus. Ranking is uniform, not stake-weighted.
+ *
+ * The SQL filter compares stake_amount as numeric against the floor bound as
+ * numeric (never as text, never through a JS number). canCastVote() re-checks
+ * each row with the same rule so the two can never drift apart.
  */
-async function rankedLiveReexecutors(seed: string, allowlist: boolean) {
+async function rankedLiveReexecutors(seed: string, rules: VoteEligibility) {
   let qb = db
     .selectFrom("reexecutor")
-    .select(["id", "stellar_account"])
+    .select(["id", "stellar_account", "active", "approved", "stake_amount"])
     .where("active", "=", true)
+    .where(sql<boolean>`stake_amount >= ${rules.minStakeFloor.toString()}::numeric`)
     .where("last_seen_at", ">", sql<Date>`now() - (${env.REEXECUTOR_LIVENESS_S} || ' seconds')::interval`);
-  if (allowlist) qb = qb.where("approved", "=", true);
-  const live = await qb.execute();
+  if (rules.allowlist) qb = qb.where("approved", "=", true);
+  const live = (await qb.execute()).filter((r) => canCastVote(r, rules));
   return rankBySeed(seed, live);
 }
 
@@ -64,7 +111,7 @@ async function assignNext(
   table: "replay" | "spot_check",
   submissionId: string,
   seed: string,
-  allowlist: boolean,
+  rules: VoteEligibility,
   count: number
 ): Promise<number> {
   if (count <= 0) return 0;
@@ -73,7 +120,7 @@ async function assignNext(
       await db.selectFrom(table).select("reexecutor_id").where("submission_id", "=", submissionId).execute()
     ).map((row) => row.reexecutor_id)
   );
-  const next = (await rankedLiveReexecutors(seed, allowlist)).filter((r) => !taken.has(r.id)).slice(0, count);
+  const next = (await rankedLiveReexecutors(seed, rules)).filter((r) => !taken.has(r.id)).slice(0, count);
   for (const r of next) {
     if (table === "replay") {
       await db
@@ -116,7 +163,7 @@ export async function assignReplayJobs(params: {
   fullQuorum?: boolean;
 }) {
   if (params.taskType === "unverifiable") return;
-  const { quorum, allowlist } = await votingRules();
+  const { quorum, eligibility } = await votingRules();
   const seed = assignmentSeed(params.submissionId, params.chainSubmissionId);
 
   if (params.taskType === "deterministic" || params.fullQuorum) {
@@ -127,9 +174,9 @@ export async function assignReplayJobs(params: {
       .where("status", "!=", "missed")
       .executeTakeFirst();
     const want = replayWantCount(quorum, env.REPLAY_OVERASSIGN, Number(held?.count ?? 0));
-    await assignNext("replay", params.submissionId, seed, allowlist, want);
+    await assignNext("replay", params.submissionId, seed, eligibility, want);
   } else {
-    await assignNext("spot_check", params.submissionId, seed, allowlist, 1);
+    await assignNext("spot_check", params.submissionId, seed, eligibility, 1);
   }
 }
 
@@ -199,7 +246,7 @@ export async function topUpAssignments(): Promise<number> {
     .execute();
   if (open.length === 0) return 0;
 
-  const { quorum, allowlist } = await votingRules();
+  const { quorum, eligibility } = await votingRules();
   const freshSince = sql<Date>`now() - (${env.REPLAY_REASSIGN_AFTER_S} || ' seconds')::interval`;
   let added = 0;
 
@@ -217,7 +264,7 @@ export async function topUpAssignments(): Promise<number> {
 
     if (needsFullQuorum(sub)) {
       const working = Number(replays?.confirmed ?? 0) + Number(replays?.fresh ?? 0);
-      added += await assignNext("replay", sub.id, seed, allowlist, quorum - working);
+      added += await assignNext("replay", sub.id, seed, eligibility, quorum - working);
       continue;
     }
 
@@ -231,7 +278,7 @@ export async function topUpAssignments(): Promise<number> {
       .where("submission_id", "=", sub.id)
       .executeTakeFirst();
     if (Number(spot?.answered ?? 0) === 0 && Number(spot?.fresh ?? 0) === 0) {
-      added += await assignNext("spot_check", sub.id, seed, allowlist, 1);
+      added += await assignNext("spot_check", sub.id, seed, eligibility, 1);
     }
   }
   return added;

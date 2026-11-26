@@ -2,6 +2,18 @@ import "dotenv/config";
 import "./net.js";
 import { StrKey } from "@stellar/stellar-sdk";
 import { z } from "zod";
+import { BUILT_TX_VALIDITY_MS } from "../modules/submissions/supersede.js";
+
+/** Headroom on top of a built transaction's validity for the relay: it polls
+ * for the result for up to 45 s after the signed transaction is sent. */
+const RELAY_HEADROOM_S = 60;
+
+/** The shortest DRAFT_TTL_S that still outlives the transaction built for a
+ * draft and the relay that lands it. A shorter TTL lets the purge delete a
+ * draft the user is still signing (the relay then answers 404), or one whose
+ * transaction is landing (the relay answers 500 and nothing matches the
+ * on-chain submission). */
+export const MIN_DRAFT_TTL_S = Math.ceil(BUILT_TX_VALIDITY_MS / 1000) + RELAY_HEADROOM_S;
 
 const flag = (fallback: "true" | "false") =>
   z
@@ -95,8 +107,15 @@ export const envSchema = z.object({
   // and another re-executor is asked.
   REPLAY_REASSIGN_AFTER_S: z.coerce.number().int().positive().default(120),
   // Unsigned submission drafts older than this are deleted. Must outlast the
-  // validity of the transaction built for them.
-  DRAFT_TTL_S: z.coerce.number().int().positive().default(3600),
+  // validity of the transaction built for them plus the relay's polling.
+  DRAFT_TTL_S: z.coerce
+    .number()
+    .int()
+    .min(
+      MIN_DRAFT_TTL_S,
+      `must be at least ${MIN_DRAFT_TTL_S} seconds so a draft outlives the transaction built for it and its relay`
+    )
+    .default(3600),
   // Validity and confirmation timeout in seconds for keeper transactions
   // (finalize, resolve_challenge, release_attestation_lock).
   KEEPER_TX_TIMEOUT_S: z.coerce.number().int().min(10).default(30),

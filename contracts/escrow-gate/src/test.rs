@@ -1,6 +1,9 @@
 #![cfg(test)]
 
-use crate::events::{ReexecutorRegistered, ReexecutorStakeWithdrawn};
+use crate::events::{
+    ChallengeOpened, ChallengeResolved, Finalized, ReexecutorApprovalChanged, ReexecutorRegistered,
+    ReexecutorStakeWithdrawn, ReplayAttested, Slashed, SubmissionCreated,
+};
 use crate::{EscrowGate, EscrowGateClient};
 use soroban_sdk::{
     events::Event as _,
@@ -75,6 +78,55 @@ fn submit_default(w: &World, agent: &Address) -> u64 {
 fn register_rex(w: &World, rex: &Address) {
     fund(w, rex, 2000 * XLM);
     w.client.register_reexecutor(rex, &(600 * XLM));
+}
+
+// ---- the bond asset ----
+
+#[test]
+fn get_bond_asset_returns_the_token_the_gate_was_deployed_with() {
+    let e = Env::default();
+    let w = setup(&e);
+    assert_eq!(w.client.get_bond_asset(), Some(w.token.address.clone()));
+
+    // A second gate, deployed with another token, reports its own.
+    let other = e.register_stellar_asset_contract_v2(w.admin.clone());
+    let id = e.register(
+        EscrowGate,
+        (w.admin.clone(), other.address(), default_config()),
+    );
+    let second = EscrowGateClient::new(&e, &id);
+    assert_eq!(second.get_bond_asset(), Some(other.address()));
+    assert_ne!(second.get_bond_asset(), w.client.get_bond_asset());
+}
+
+#[test]
+fn bonds_and_stakes_move_in_the_token_get_bond_asset_names() {
+    let e = Env::default();
+    let w = setup(&e);
+    let asset = w.client.get_bond_asset().unwrap();
+    let named = token::Client::new(&e, &asset);
+
+    let agent = Address::generate(&e);
+    submit_default(&w, &agent);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+
+    // 50 XLM of bond and 600 XLM of stake are held in exactly that token.
+    assert_eq!(named.balance(&w.client.address), 650 * XLM);
+    assert_eq!(named.balance(&agent), 950 * XLM);
+    assert_eq!(named.balance(&rex), 1400 * XLM);
+}
+
+#[test]
+fn get_bond_asset_is_none_when_the_gate_has_no_stored_asset() {
+    let e = Env::default();
+    let w = setup(&e);
+    e.as_contract(&w.client.address, || {
+        e.storage()
+            .instance()
+            .remove(&crate::storage::DataKey::BondAsset)
+    });
+    assert_eq!(w.client.get_bond_asset(), None);
 }
 
 // ---- basic submit / bond custody ----
@@ -2622,4 +2674,274 @@ fn a_challenge_with_a_zero_bond_is_rejected_even_when_the_minimum_rounds_to_zero
         Err(Ok(Error::BondTooLow))
     );
     assert!(w.client.get_challenge(&id).is_none());
+}
+
+// ---- events the indexer mirrors ----
+//
+// The backend builds its whole Postgres mirror from these events and decodes
+// them by topic position and field name, so each entrypoint that publishes
+// one asserts the whole event here. Without this a dropped publish, a renamed
+// field or a reordered topic would pass CI and only show up as corrupt reads.
+
+fn gate_events(e: &Env, contract: &Address) -> std::vec::Vec<soroban_sdk::xdr::ContractEvent> {
+    e.events().all().filter_by_contract(contract).events().to_vec()
+}
+
+/// Asserts the contract published exactly one event whose XDR is byte-for-byte
+/// `expected` — contract id, topics in order, and data.
+fn assert_published(
+    e: &Env,
+    contract: &Address,
+    name: &str,
+    expected: soroban_sdk::xdr::ContractEvent,
+) {
+    let count = gate_events(e, contract)
+        .iter()
+        .filter(|ev| *ev == &expected)
+        .count();
+    assert_eq!(count, 1, "expected exactly one {name} event with this payload");
+}
+
+#[test]
+fn submit_publishes_submission_created() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let escrow_ref = BytesN::from_array(&e, &[1u8; 32]);
+    fund(&w, &agent, 1000 * XLM);
+    let id = w.client.submit(
+        &agent,
+        &escrow_ref,
+        &(1000 * XLM),
+        &TaskType::Deterministic,
+        &BytesN::from_array(&e, &[2u8; 32]),
+        &BytesN::from_array(&e, &[3u8; 32]),
+        &(50 * XLM),
+    );
+    assert_published(
+        &e,
+        &w.client.address,
+        "submission_created",
+        SubmissionCreated {
+            submission_id: id,
+            agent,
+            escrow_ref,
+            escrow_value: 1000 * XLM,
+            bond: 50 * XLM,
+        }
+        .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn register_reexecutor_publishes_reexecutor_registered() {
+    let e = Env::default();
+    let w = setup(&e);
+    let rex = Address::generate(&e);
+    fund(&w, &rex, 2000 * XLM);
+    w.client.register_reexecutor(&rex, &(600 * XLM));
+    assert_published(
+        &e,
+        &w.client.address,
+        "reexecutor_registered",
+        ReexecutorRegistered { reexecutor: rex, stake_amount: 600 * XLM, active: true }
+            .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn withdraw_stake_publishes_reexecutor_stake_withdrawn() {
+    let e = Env::default();
+    let w = setup(&e);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+    w.client.withdraw_stake(&rex, &(100 * XLM));
+    assert_published(
+        &e,
+        &w.client.address,
+        "reexecutor_stake_withdrawn",
+        ReexecutorStakeWithdrawn { reexecutor: rex, new_stake: 500 * XLM, active: true }
+            .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn set_reexecutor_approved_publishes_reexecutor_approval_changed() {
+    let e = Env::default();
+    let w = setup(&e);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+    w.client.set_reexecutor_approved(&w.admin, &rex, &true);
+    assert_published(
+        &e,
+        &w.client.address,
+        "reexecutor_approval_changed",
+        ReexecutorApprovalChanged { reexecutor: rex, approved: true }
+            .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn attest_replay_publishes_replay_attested() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+    let output_hash = BytesN::from_array(&e, &[3u8; 32]);
+    w.client.attest_replay(&rex, &id, &output_hash, &true);
+    assert_published(
+        &e,
+        &w.client.address,
+        "replay_attested",
+        ReplayAttested { submission_id: id, reexecutor: rex, output_hash, matched: true }
+            .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn open_challenge_publishes_challenge_opened() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    let challenger = Address::generate(&e);
+    fund(&w, &challenger, 1000 * XLM);
+    w.client.open_challenge(&challenger, &id, &(50 * XLM));
+    assert_published(
+        &e,
+        &w.client.address,
+        "challenge_opened",
+        ChallengeOpened { submission_id: id, challenger, bond: 50 * XLM }
+            .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn resolve_challenge_publishes_challenge_resolved() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    let challenger = Address::generate(&e);
+    fund(&w, &challenger, 1000 * XLM);
+    w.client.open_challenge(&challenger, &id, &(50 * XLM));
+    for _ in 0..3 {
+        let r = Address::generate(&e);
+        register_rex(&w, &r);
+        w.client.attest_replay(&r, &id, &BytesN::from_array(&e, &[9u8; 32]), &false);
+    }
+    w.client.resolve_challenge(&id, &ResolutionMethod::ReexecutionConsensus);
+    assert_published(
+        &e,
+        &w.client.address,
+        "challenge_resolved",
+        ChallengeResolved {
+            submission_id: id,
+            resolution: Resolution::Upheld,
+            method: ResolutionMethod::ReexecutionConsensus,
+        }
+        .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn finalize_publishes_finalized() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    e.ledger().set_timestamp(3601);
+    assert_eq!(w.client.finalize(&id), Verdict::Verified);
+    assert_published(
+        &e,
+        &w.client.address,
+        "finalized",
+        Finalized { submission_id: id, verdict: Verdict::Verified }
+            .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn slash_publishes_slashed_with_the_real_amount() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    let wrong = Address::generate(&e);
+    let right1 = Address::generate(&e);
+    let right2 = Address::generate(&e);
+    for r in [&wrong, &right1, &right2] {
+        register_rex(&w, r);
+    }
+    w.client.attest_replay(&wrong, &id, &BytesN::from_array(&e, &[3u8; 32]), &true);
+    w.client.attest_replay(&right1, &id, &BytesN::from_array(&e, &[9u8; 32]), &false);
+    w.client.attest_replay(&right2, &id, &BytesN::from_array(&e, &[9u8; 32]), &false);
+    assert_eq!(w.client.finalize(&id), Verdict::Slashed);
+    assert_eq!(w.client.slash(&wrong, &id), 60 * XLM);
+    assert_published(
+        &e,
+        &w.client.address,
+        "slashed",
+        Slashed { submission_id: id, reexecutor: wrong, amount: 60 * XLM }
+            .to_xdr(&e, &w.client.address),
+    );
+}
+
+#[test]
+fn a_repeat_finalize_publishes_no_second_event() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    e.ledger().set_timestamp(3601);
+    assert_eq!(w.client.finalize(&id), Verdict::Verified);
+
+    assert_eq!(w.client.finalize(&id), Verdict::Verified);
+    // The test host reports the events of the last invocation only, and the
+    // repeat call is a pure read.
+    assert!(gate_events(&e, &w.client.address).is_empty());
+}
+
+#[test]
+fn a_rejected_submit_publishes_no_event() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    fund(&w, &agent, 1000 * XLM);
+
+    let res = w.client.try_submit(
+        &agent,
+        &BytesN::from_array(&e, &[1u8; 32]),
+        &(1000 * XLM),
+        &TaskType::Deterministic,
+        &BytesN::from_array(&e, &[2u8; 32]),
+        &BytesN::from_array(&e, &[3u8; 32]),
+        &(10 * XLM), // below the 5% = 50 XLM floor
+    );
+    assert_eq!(res, Err(Ok(Error::BondTooLow)));
+    assert!(gate_events(&e, &w.client.address).is_empty());
+}
+
+#[test]
+fn releasing_a_correct_voters_lock_publishes_no_slash() {
+    let e = Env::default();
+    let w = setup(&e);
+    let agent = Address::generate(&e);
+    let id = submit_default(&w, &agent);
+    let right1 = Address::generate(&e);
+    let right2 = Address::generate(&e);
+    let right3 = Address::generate(&e);
+    for r in [&right1, &right2, &right3] {
+        register_rex(&w, r);
+        w.client.attest_replay(r, &id, &BytesN::from_array(&e, &[3u8; 32]), &true);
+    }
+    assert_eq!(w.client.finalize(&id), Verdict::Verified);
+
+    w.client.release_attestation_lock(&id, &right1);
+    // A vote the verdict agreed with is never slashed, and releasing its
+    // lock publishes nothing else either.
+    assert!(gate_events(&e, &w.client.address).is_empty());
+    assert_eq!(w.client.reexecutor_info(&right1).unwrap().stake_amount, 600 * XLM);
 }

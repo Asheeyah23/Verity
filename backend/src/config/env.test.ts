@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { Keypair, StrKey } from "@stellar/stellar-sdk";
 
 const HOST_ERROR = "must be a host[:port] without scheme or path, e.g. api.verity.example";
@@ -21,7 +24,7 @@ const validEnv = {
 
 Object.assign(process.env, validEnv);
 
-const { envSchema, preprocessedSchema } = await import("./env.js");
+const { envSchema, preprocessedSchema, MIN_DRAFT_TTL_S } = await import("./env.js");
 
 const DOMAIN_FIELDS = ["WEB_AUTH_DOMAIN", "HOME_DOMAIN"] as const;
 
@@ -186,4 +189,56 @@ test("empty string for required key fails validation", () => {
       KEEPER_SECRET_KEY: "",
     });
   });
+});
+
+// #282: the draft purge must never delete a draft whose transaction is still
+// being signed or relayed. 330 s of built-transaction validity + 60 s relay.
+test("MIN_DRAFT_TTL_S covers a built transaction's validity plus the relay", async () => {
+  const { BUILT_TX_VALIDITY_MS } = await import("../modules/submissions/supersede.js");
+  assert.equal(MIN_DRAFT_TTL_S, 390);
+  assert.ok(MIN_DRAFT_TTL_S * 1000 >= BUILT_TX_VALIDITY_MS + 45_000);
+});
+
+test("DRAFT_TTL_S defaults to 3600, which is accepted", () => {
+  const parsed = envSchema.parse(validEnv);
+  assert.equal(parsed.DRAFT_TTL_S, 3600);
+  assert.equal(envSchema.parse({ ...validEnv, DRAFT_TTL_S: "3600" }).DRAFT_TTL_S, 3600);
+});
+
+test("DRAFT_TTL_S at the floor is accepted", () => {
+  const parsed = envSchema.parse({ ...validEnv, DRAFT_TTL_S: String(MIN_DRAFT_TTL_S) });
+  assert.equal(parsed.DRAFT_TTL_S, MIN_DRAFT_TTL_S);
+});
+
+for (const value of ["60", "1", String(MIN_DRAFT_TTL_S - 1), "0", "-5"]) {
+  test(`DRAFT_TTL_S=${value} is rejected with a message naming the floor`, () => {
+    const result = envSchema.safeParse({ ...validEnv, DRAFT_TTL_S: value });
+    assert.equal(result.success, false);
+    const issue = result.error!.issues.find((i) => i.path.join(".") === "DRAFT_TTL_S");
+    assert.ok(issue, "expected an issue on DRAFT_TTL_S");
+    assert.equal(
+      issue.message,
+      `must be at least ${MIN_DRAFT_TTL_S} seconds so a draft outlives the transaction built for it and its relay`
+    );
+  });
+}
+
+test("startup with DRAFT_TTL_S=60 exits 1 and names the problem", () => {
+  const envModule = fileURLToPath(new URL("./env.ts", import.meta.url));
+  const run = (draftTtl: string) =>
+    spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), envModule], {
+      // A cwd with no .env, so dotenv cannot add a developer's local settings.
+      cwd: tmpdir(),
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, ...validEnv, DRAFT_TTL_S: draftTtl },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+
+  const bad = run("60");
+  assert.equal(bad.status, 1, bad.stderr);
+  assert.match(bad.stderr, /Invalid environment configuration/);
+  assert.match(bad.stderr, new RegExp(`DRAFT_TTL_S: must be at least ${MIN_DRAFT_TTL_S} seconds`));
+
+  const good = run("3600");
+  assert.equal(good.status, 0, good.stderr);
 });

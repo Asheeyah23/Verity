@@ -13,7 +13,13 @@ export async function configRoutes(app: FastifyInstance) {
       network_passphrase: env.NETWORK_PASSPHRASE,
       escrow_gate_contract_id: env.ESCROW_GATE_CONTRACT_ID,
       public_api_url: `${env.PUBLIC_SCHEME}://${env.WEB_AUTH_DOMAIN}`,
+      // What the dashboard formats amounts with. It reads "native" or an object
+      // with a symbol and decimals, which this backend does not know for another
+      // token, so the value is left as it was.
       bond_asset: "native",
+      // The contract id of the token bonds and stakes are paid in: checked
+      // against the gate's own at startup (chain/bond-asset.ts).
+      bond_asset_contract_id: env.BOND_ASSET_CONTRACT_ID,
       min_stake_floor: cfg.min_stake_floor.toString(),
       quorum_min_reexecutors: cfg.quorum_min_reexecutors,
       quorum_supermajority_bps: cfg.quorum_supermajority_bps,

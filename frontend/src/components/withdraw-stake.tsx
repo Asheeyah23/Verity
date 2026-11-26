@@ -4,9 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "./wallet-provider";
 import { Button } from "./ui/button";
-import { buildStakeWithdrawal, relayReexecutorStake } from "../lib/client-api";
+import { LiveStatus } from "./live-status";
+import { buildStakeWithdrawal, relayReexecutorStake, ActionTimeoutError } from "../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../lib/wallet";
-import { TESTNET_EXPLORER_TX } from "../lib/config";
+import { explorerUrl } from "../lib/config";
 import { formatUnits, parseUnits, resolveBondAsset } from "../lib/format";
 import type { BondAsset } from "../lib/types";
 
@@ -33,6 +34,7 @@ export function WithdrawStake({
   const [amountInput, setAmountInput] = useState("");
   const [busy, setBusy] = useState<null | "checking" | "building" | "signing" | "relaying">(null);
   const [error, setError] = useState<string | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   if (wallet.account !== account || BigInt(stakeStroops) === BigInt(0)) return null;
@@ -74,14 +76,31 @@ export function WithdrawStake({
         wallet.reportWrongNetwork(err.message);
         return;
       }
+      if (err instanceof ActionTimeoutError) {
+        setOutcomeUnknown(true);
+      } else {
+        setOutcomeUnknown(false);
+      }
       setError(err instanceof Error ? err.message : "The withdrawal could not be completed.");
     } finally {
       setBusy(null);
     }
   }
 
+  const stepLabel =
+    busy === "checking"
+      ? "Checking Freighter..."
+      : busy === "building"
+        ? "Building transaction..."
+        : busy === "signing"
+          ? "Awaiting signature in Freighter..."
+          : busy === "relaying"
+            ? "Submitting to testnet..."
+            : "Withdraw stake";
+
   return (
     <div className="space-y-3">
+      <LiveStatus message={busy !== null ? stepLabel : ""} />
       <p className="max-w-prose text-sm text-text-secondary">
         This is your account. Stake above the {formatUnits(floorStroops, asset.decimals, asset.symbol)} floor can leave at
         any time; going below it stops new assignments, and the contract refuses that while any of
@@ -101,27 +120,37 @@ export function WithdrawStake({
             className="w-40 rounded-lg border border-border-strong bg-surface px-3 py-2 font-mono text-sm outline-none focus:border-accent"
           />
         </div>
-        <Button variant="secondary" onClick={handleWithdraw} disabled={busy !== null || !wallet.networkOk}>
-          {busy === "checking"
-            ? "Checking Freighter..."
-            : busy === "building"
-              ? "Building transaction..."
-              : busy === "signing"
-                ? "Awaiting signature in Freighter..."
-                : busy === "relaying"
-                  ? "Submitting to testnet..."
-                  : "Withdraw stake"}
+        <Button
+          variant="secondary"
+          onClick={handleWithdraw}
+          disabled={busy !== null || !wallet.networkOk}
+          aria-busy={busy !== null}
+        >
+          {stepLabel}
         </Button>
       </div>
       {displayError && (
-        <p role="alert" className="text-sm text-status-slashed">
-          {displayError}
-        </p>
+        <div role="alert" className="text-sm text-status-slashed space-y-2">
+          <p>{displayError}</p>
+          {outcomeUnknown && (
+            <p className="text-xs">
+              The transaction may still be on-chain. Check your account on stellar.expert:{" "}
+              <a
+                href={explorerUrl("account", account, networkPassphrase)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline-offset-2 hover:underline"
+              >
+                {account.slice(0, 6)}…{account.slice(-4)}
+              </a>
+            </p>
+          )}
+        </div>
       )}
       {txHash && (
         <p role="status" className="text-sm">
-          Withdrawal confirmed on testnet.{" "}
-          <a href={TESTNET_EXPLORER_TX(txHash)} target="_blank" rel="noreferrer" className="text-accent underline-offset-2 hover:underline">
+          Withdrawal confirmed.{" "}
+          <a href={explorerUrl("tx", txHash, networkPassphrase)} target="_blank" rel="noreferrer" className="text-accent underline-offset-2 hover:underline">
             View transaction
           </a>
         </p>

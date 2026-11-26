@@ -22,6 +22,7 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/_deployment.sh"
 require_deployment
 refuse_public_deployment "pnpm dev is the local development runner; a public deployment runs from the container stack (docs/DEPLOY.md)."
+refuse_mainnet_deployment "pnpm dev is the local development runner and must never run against mainnet (docs/MAINNET.md)."
 assert_identities_match
 
 API_PORT="${VERITY_API_PORT:-3001}"
@@ -40,7 +41,9 @@ done
 
 GATE_ID="$(json_field escrow_gate_contract_id)"
 REGISTRY_ID="$(json_field zk_verifier_registry_contract_id)"
-BOND_ASSET_ID="$(json_field native_xlm_sac_address)"
+# The gate's bond asset. A record written before the deploy script took
+# VERITY_BOND_ASSET has only the native XLM address, which was the bond asset.
+BOND_ASSET_ID="$(json_field bond_asset_sac_address 2>/dev/null || json_field native_xlm_sac_address)"
 DATABASE_URL="postgres://verity:verity@127.0.0.1:${PG_PORT}/verity"
 
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -185,7 +188,7 @@ echo
 echo "Verity is up (Ctrl+C stops everything):"
 echo "  API       http://localhost:$API_PORT"
 [ "$RUN_WEB" = 1 ] && echo "  Dashboard http://localhost:$WEB_PORT"
-echo "  EscrowGate $GATE_ID (deployment '$DEPLOYMENT', testnet)"
+echo "  EscrowGate $GATE_ID (deployment '$DEPLOYMENT', $NETWORK)"
 echo "  End-to-end check, in another terminal:  VERITY_API_PORT=$API_PORT pnpm smoke"
 echo
 wait

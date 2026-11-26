@@ -192,7 +192,7 @@ export async function submissionsRoutes(app: FastifyInstance) {
           ...values,
           marketplace_id: marketplace.id,
           agent_id: agent,
-          bond_asset: "native",
+          bond_asset: env.BOND_ASSET_CONTRACT_ID,
           challenge_window_s: 0, // set by the contract at submit() time; filled in on relay confirm
           idempotency_key: body.idempotency_key,
         })

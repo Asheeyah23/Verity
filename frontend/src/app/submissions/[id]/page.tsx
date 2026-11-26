@@ -8,8 +8,15 @@ import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { VerdictBadge } from "../../../components/verdict-badge";
 import { AutoRefresh } from "../../../components/auto-refresh";
-import { truncateMiddle, formatDuration, formatRelativeTime, recordedWindowDeadlineIso, formatUnits, resolveBondAsset } from "../../../lib/format";
-import { TESTNET_EXPLORER_ACCOUNT, TESTNET_EXPLORER_TX } from "../../../lib/config";
+import {
+  truncateMiddle,
+  formatDuration,
+  formatRelativeTime,
+  recordedWindowDeadlineIso,
+  formatUnits,
+  resolveBondAsset,
+} from "../../../lib/format";
+import { explorerUrl, NETWORK_PASSPHRASE } from "../../../lib/config";
 import { ChallengeWindowCountdown } from "../../../components/challenge-window-countdown";
 import { OpenChallengeButton } from "../../../components/open-challenge-button";
 import { AttestationCheck } from "../../../components/attestation-check";
@@ -91,6 +98,7 @@ export default async function SubmissionDetailPage({
     settle(`artifact ${submission.function_ref}`, loadArtifact(submission.function_ref)),
     settle(`artifact ${submission.claimed_output_ref}`, loadArtifact(submission.claimed_output_ref)),
   ]);
+  const networkPassphrase = config.network_passphrase || NETWORK_PASSPHRASE;
 
   const deadline = recordedWindowDeadlineIso(submission.submitted_at, submission.challenge_window_s);
   const open = submission.status === "pending" || submission.status === "disputed";
@@ -154,7 +162,7 @@ export default async function SubmissionDetailPage({
 
       <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
         <Fact label="Agent">
-          <a href={TESTNET_EXPLORER_ACCOUNT(submission.agent_id)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
+          <a href={explorerUrl("account", submission.agent_id, networkPassphrase)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
             {truncateMiddle(submission.agent_id, 8, 8)}
           </a>
         </Fact>
@@ -167,14 +175,14 @@ export default async function SubmissionDetailPage({
         )}
         {submission.chain_tx_hash && submission.chain_submission_id && (
           <Fact label="Submit transaction">
-            <a href={TESTNET_EXPLORER_TX(submission.chain_tx_hash)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
+            <a href={explorerUrl("tx", submission.chain_tx_hash, networkPassphrase)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
               {truncateMiddle(submission.chain_tx_hash, 8, 8)}
             </a>
           </Fact>
         )}
         {submission.finalize_tx_hash && (
           <Fact label="Finalize transaction">
-            <a href={TESTNET_EXPLORER_TX(submission.finalize_tx_hash)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
+            <a href={explorerUrl("tx", submission.finalize_tx_hash, networkPassphrase)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
               {truncateMiddle(submission.finalize_tx_hash, 8, 8)}
             </a>
           </Fact>
@@ -252,12 +260,12 @@ export default async function SubmissionDetailPage({
                       </span>
                     )}
                     {r.slash_tx_hash && (
-                      <a href={TESTNET_EXPLORER_TX(r.slash_tx_hash)} target="_blank" rel="noreferrer" className="text-xs text-status-slashed underline-offset-2 hover:underline">
+                      <a href={explorerUrl("tx", r.slash_tx_hash, networkPassphrase)} target="_blank" rel="noreferrer" className="text-xs text-status-slashed underline-offset-2 hover:underline">
                         slashed
                       </a>
                     )}
                     {r.tx_hash && (
-                      <a href={TESTNET_EXPLORER_TX(r.tx_hash)} target="_blank" rel="noreferrer" className={`text-xs ${linkClass}`}>
+                      <a href={explorerUrl("tx", r.tx_hash, networkPassphrase)} target="_blank" rel="noreferrer" className={`text-xs ${linkClass}`}>
                         vote tx
                       </a>
                     )}
@@ -323,7 +331,7 @@ export default async function SubmissionDetailPage({
           {challenge ? (
             <div className="space-y-2 text-sm">
               <p>
-                <a href={TESTNET_EXPLORER_ACCOUNT(challenge.challenger_account)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
+                <a href={explorerUrl("account", challenge.challenger_account, networkPassphrase)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
                   {truncateMiddle(challenge.challenger_account, 6, 6)}
                 </a>{" "}
                 bonded{" "}
@@ -342,7 +350,7 @@ export default async function SubmissionDetailPage({
                       : "Open. It resolves when a quorum of re-executors reaches consensus, or expires one window after it was opened."}
               </p>
               {challenge.chain_tx_hash && (
-                <a href={TESTNET_EXPLORER_TX(challenge.chain_tx_hash)} target="_blank" rel="noreferrer" className={`text-xs ${linkClass}`}>
+                <a href={explorerUrl("tx", challenge.chain_tx_hash, networkPassphrase)} target="_blank" rel="noreferrer" className={`text-xs ${linkClass}`}>
                   View challenge transaction
                 </a>
               )}
@@ -356,7 +364,7 @@ export default async function SubmissionDetailPage({
               submissionId={submission.id}
               deadlineIso={deadline}
               minBondStroops={submission.min_challenger_bond}
-              networkPassphrase={config.network_passphrase}
+              networkPassphrase={networkPassphrase}
               bondAsset={config.bond_asset}
             />
           ) : (
@@ -381,7 +389,7 @@ export default async function SubmissionDetailPage({
             <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
               {attestation.value.signer && (
                 <Fact label="Signer">
-                  <a href={TESTNET_EXPLORER_ACCOUNT(attestation.value.signer)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
+                  <a href={explorerUrl("account", attestation.value.signer, networkPassphrase)} target="_blank" rel="noreferrer" className={`font-mono text-xs ${linkClass}`}>
                     {truncateMiddle(attestation.value.signer, 8, 8)}
                   </a>
                 </Fact>

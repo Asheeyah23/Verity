@@ -6,6 +6,17 @@ import type { GateConfig } from "./types";
  * action fail with "not authenticated". */
 export const SESSION_EXPIRED_EVENT = "verity:session-expired";
 
+/** Error thrown when the backend action timed out — the transaction outcome
+ * is unknown. The form should show an explorer link so the user can check
+ * whether the transaction reached the chain before retrying. */
+export class ActionTimeoutError extends Error {
+  readonly outcomeUnknown = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "ActionTimeoutError";
+  }
+}
+
 async function json<T>(res: Response): Promise<T> {
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (res.status === 401 && typeof window !== "undefined") {
@@ -20,6 +31,14 @@ async function json<T>(res: Response): Promise<T> {
       }
     }
     const fallback = typeof data.error === "string" ? data.error : `Request failed: ${res.status}`;
+    // Timeout from backend-proxy (504) carries outcome_unknown=true
+    if (res.status === 504 && data.outcome_unknown === true) {
+      throw new ActionTimeoutError(
+        typeof data.error === "string"
+          ? data.error
+          : "The request took too long. The transaction may still have reached the network."
+      );
+    }
     throw new Error(fallback);
   }
   return data as T;

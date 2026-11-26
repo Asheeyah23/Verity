@@ -1,6 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { BACKEND_ACTION_TIMEOUT_MS, BACKEND_URL, FRIENDBOT_URL } from "../../../lib/config";
+import { BACKEND_ACTION_TIMEOUT_MS, BACKEND_URL, FRIENDBOT_URL, isTestnetPassphrase } from "../../../lib/config";
 import { SESSION_COOKIE } from "../../../lib/backend-proxy";
 
 // Rate limit: at most one Friendbot funding per account per minute in memory
@@ -14,6 +14,9 @@ const COOLDOWN_MS = 60_000;
  * with a valid cryptographic signature, preventing arbitrary faucet draining.
  */
 export async function POST() {
+  if (!isTestnetPassphrase()) {
+    return NextResponse.json({ error: "Friendbot is only available on Stellar testnet." }, { status: 400 });
+  }
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return NextResponse.json({ error: "not authenticated" }, { status: 401 });
