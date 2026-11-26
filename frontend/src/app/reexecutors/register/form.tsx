@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useWallet } from "../../../components/wallet-provider";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button, buttonClasses } from "../../../components/ui/button";
+import { LiveStatus } from "../../../components/live-status";
 import { registerReexecutor, relayReexecutorStake, ActionTimeoutError } from "../../../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
 import { NETWORK_PASSPHRASE, explorerUrl } from "../../../lib/config";
@@ -57,6 +58,18 @@ pnpm --filter @verity/reexecutor-agent start`;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
+
+  const busy = status === "checking" || status === "building" || status === "signing" || status === "relaying";
+  const stepLabel =
+    status === "checking"
+      ? "Checking Freighter..."
+      : status === "building"
+        ? "Building transaction..."
+        : status === "signing"
+          ? "Awaiting signature in Freighter..."
+          : status === "relaying"
+            ? "Submitting to testnet..."
+            : "Stake and register";
 
   async function handleRegister() {
     if (!account || !networkOk) return;
@@ -147,6 +160,7 @@ pnpm --filter @verity/reexecutor-agent start`;
           <h2 className="font-medium">Stake</h2>
         </CardHeader>
         <CardBody className="space-y-4">
+          <LiveStatus message={busy ? stepLabel : ""} />
           {status === "done" && result ? (
             <div className="space-y-3 text-sm" role="status">
               <p className="text-status-verified">
@@ -217,19 +231,11 @@ pnpm --filter @verity/reexecutor-agent start`;
               )}
 
               {account ? (
-                <Button onClick={handleRegister} disabled={(status !== "idle" && status !== "error") || !networkOk}>
-                  {status === "checking"
-                    ? "Checking Freighter..."
-                    : status === "building"
-                      ? "Building transaction..."
-                      : status === "signing"
-                        ? "Awaiting signature in Freighter..."
-                        : status === "relaying"
-                          ? "Submitting to testnet..."
-                          : "Stake and register"}
+                <Button onClick={handleRegister} disabled={busy || !networkOk} aria-busy={busy}>
+                  {stepLabel}
                 </Button>
               ) : (
-                <Button onClick={login} disabled={connecting}>
+                <Button onClick={login} disabled={connecting} aria-busy={connecting}>
                   {connecting ? "Connecting..." : "Connect wallet to continue"}
                 </Button>
               )}
