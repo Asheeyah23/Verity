@@ -92,6 +92,23 @@ echo "==> Resolving native XLM Stellar Asset Contract address"
 NATIVE_SAC=$(stellar contract id asset --asset native --network "$NETWORK")
 echo "==> Native XLM SAC: $NATIVE_SAC"
 
+# The token EscrowGate takes every bond and stake in, fixed for the life of the
+# contract. Native XLM unless VERITY_BOND_ASSET names another asset as
+# CODE:ISSUER (testnet USDC, say). The amounts in the gate's config
+# (min_stake_floor, window_tier_small_ceiling) are in that asset's smallest unit.
+BOND_ASSET="${VERITY_BOND_ASSET:-native}"
+if [ "$BOND_ASSET" = native ]; then
+  BOND_ASSET_SAC="$NATIVE_SAC"
+else
+  echo "==> Resolving the Stellar Asset Contract address of $BOND_ASSET"
+  BOND_ASSET_SAC=$(stellar contract id asset --asset "$BOND_ASSET" --network "$NETWORK")
+  echo "NOTE: bonds and stakes on this deployment are in $BOND_ASSET, not XLM."
+  echo "      Its asset contract must already exist on the network (stellar contract asset deploy),"
+  echo "      and every re-executor, agent and challenger needs a trustline to it and a balance"
+  echo "      before it can stake or post a bond. scripts/bootstrap_reexecutors.sh does not set those up."
+fi
+echo "==> Bond asset: $BOND_ASSET ($BOND_ASSET_SAC)"
+
 echo "==> Building contracts (release profile)"
 cd "$CONTRACTS_DIR"
 stellar contract build
@@ -123,7 +140,7 @@ GATE_ID=$(stellar contract deploy \
   --network "$NETWORK" \
   -- \
   --admin "$DEPLOYER_ADDR" \
-  --bond_asset "$NATIVE_SAC" \
+  --bond_asset "$BOND_ASSET_SAC" \
   --config "$GATE_CONFIG")
 echo "EscrowGate contract id: $GATE_ID"
 echo "escrow_gate_contract_id=$GATE_ID" >> "$RECOVERY_FILE"
@@ -174,6 +191,8 @@ cat > "$DEPLOY_JSON.tmp" <<EOF
   "network_passphrase": "$NETWORK_PASSPHRASE",
   "escrow_gate_contract_id": "$GATE_ID",
   "zk_verifier_registry_contract_id": "$REGISTRY_ID",
+  "bond_asset": "$BOND_ASSET",
+  "bond_asset_sac_address": "$BOND_ASSET_SAC",
   "native_xlm_sac_address": "$NATIVE_SAC",
   "deployer_public_key": "$DEPLOYER_ADDR",
   "keeper_public_key": "$KEEPER_ADDR",

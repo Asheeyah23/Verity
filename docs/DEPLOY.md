@@ -42,6 +42,43 @@ rather than the 10-minute dev windows.
 
 Commit `deployments/public.json`. It holds contract IDs and public keys only.
 
+### Bonding in another asset
+
+EscrowGate takes every bond and stake in one token, fixed when it is deployed.
+That is native XLM unless you name another asset, as `CODE:ISSUER`, when you
+create the deployment:
+
+```bash
+VERITY_BOND_ASSET=USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 \
+  VERITY_DEPLOYMENT=public scripts/deploy_testnet.sh --public
+```
+
+The script resolves the asset's Stellar Asset Contract and records it in the
+deployment file as `bond_asset_sac_address`, next to `bond_asset`.
+`native_xlm_sac_address` is still written, and is the same address on a
+native deployment. Anyone can read the token back from the contract with
+`get_bond_asset`.
+
+Before you choose an asset other than XLM:
+
+- **Its asset contract must exist on the network.** For an asset of your own,
+  deploy it once with `stellar contract asset deploy`. The deploy script only
+  computes the address.
+- **Every account that moves the token needs a trustline to it, and a
+  balance.** That is each re-executor (to stake), each agent (to post a bond)
+  and each challenger, and the admin account, which receives forfeited bonds.
+  A transfer to or from an account without the trustline fails, and the
+  contract call fails with it. `scripts/bootstrap_reexecutors.sh` stakes from
+  the fleet's accounts and does not create trustlines or fund them in another
+  asset: do that first.
+- **The amounts in the gate's configuration are in the asset's smallest
+  unit.** `min_stake_floor` and `window_tier_small_ceiling` default to values
+  chosen for XLM (500 and 100,000 XLM, in stroops). Pass your own with
+  `VERITY_GATE_CONFIG` if those are not what you mean in the other asset.
+- The dashboard still labels amounts as XLM.
+
+The asset cannot be changed after deployment.
+
 ## 2. Configure
 
 On the host, in a checkout of this repository:
@@ -54,7 +91,7 @@ Fill it in from `deployments/public.json` and your keystore:
 
 | Variable | Value |
 |---|---|
-| `ESCROW_GATE_CONTRACT_ID`, `ZK_VERIFIER_REGISTRY_CONTRACT_ID`, `BOND_ASSET_CONTRACT_ID` | `escrow_gate_contract_id`, `zk_verifier_registry_contract_id`, `native_xlm_sac_address` |
+| `ESCROW_GATE_CONTRACT_ID`, `ZK_VERIFIER_REGISTRY_CONTRACT_ID`, `BOND_ASSET_CONTRACT_ID` | `escrow_gate_contract_id`, `zk_verifier_registry_contract_id`, `bond_asset_sac_address` (`native_xlm_sac_address` in a record written before that field existed). The backend reads the gate's own bond asset when it starts and refuses to start if `BOND_ASSET_CONTRACT_ID` is a different one. |
 | `WEB_AUTH_DOMAIN`, `HOME_DOMAIN` | The public host of the **API**, e.g. `api.verity.example` |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 24` |
 | `JWT_SECRET` | `openssl rand -hex 32` |

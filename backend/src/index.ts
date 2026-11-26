@@ -1,4 +1,6 @@
 import { buildApp } from "./app.js";
+import { assertBondAssetMatchesGate } from "./chain/bond-asset.js";
+import { escrowGateAsKeeper } from "./chain/clients.js";
 import { env } from "./config/env.js";
 import { db } from "./db.js";
 import { startIndexer } from "./workers/indexer.js";
@@ -6,6 +8,14 @@ import { startScheduler } from "./workers/scheduler.js";
 
 async function main() {
   const app = await buildApp();
+  // Before anything is served: a backend configured for another token than
+  // the gate takes would tell every client to approve the wrong one.
+  await assertBondAssetMatchesGate({
+    read: async () => (await escrowGateAsKeeper.get_bond_asset()).result,
+    configured: env.BOND_ASSET_CONTRACT_ID,
+    gateId: env.ESCROW_GATE_CONTRACT_ID,
+    warn: (message) => app.log.warn(message),
+  });
   await app.listen({ port: env.PORT, host: "0.0.0.0" });
 
   // The indexer owns the chain cursor and the scheduler signs with the keeper

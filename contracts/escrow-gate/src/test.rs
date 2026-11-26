@@ -77,6 +77,55 @@ fn register_rex(w: &World, rex: &Address) {
     w.client.register_reexecutor(rex, &(600 * XLM));
 }
 
+// ---- the bond asset ----
+
+#[test]
+fn get_bond_asset_returns_the_token_the_gate_was_deployed_with() {
+    let e = Env::default();
+    let w = setup(&e);
+    assert_eq!(w.client.get_bond_asset(), Some(w.token.address.clone()));
+
+    // A second gate, deployed with another token, reports its own.
+    let other = e.register_stellar_asset_contract_v2(w.admin.clone());
+    let id = e.register(
+        EscrowGate,
+        (w.admin.clone(), other.address(), default_config()),
+    );
+    let second = EscrowGateClient::new(&e, &id);
+    assert_eq!(second.get_bond_asset(), Some(other.address()));
+    assert_ne!(second.get_bond_asset(), w.client.get_bond_asset());
+}
+
+#[test]
+fn bonds_and_stakes_move_in_the_token_get_bond_asset_names() {
+    let e = Env::default();
+    let w = setup(&e);
+    let asset = w.client.get_bond_asset().unwrap();
+    let named = token::Client::new(&e, &asset);
+
+    let agent = Address::generate(&e);
+    submit_default(&w, &agent);
+    let rex = Address::generate(&e);
+    register_rex(&w, &rex);
+
+    // 50 XLM of bond and 600 XLM of stake are held in exactly that token.
+    assert_eq!(named.balance(&w.client.address), 650 * XLM);
+    assert_eq!(named.balance(&agent), 950 * XLM);
+    assert_eq!(named.balance(&rex), 1400 * XLM);
+}
+
+#[test]
+fn get_bond_asset_is_none_when_the_gate_has_no_stored_asset() {
+    let e = Env::default();
+    let w = setup(&e);
+    e.as_contract(&w.client.address, || {
+        e.storage()
+            .instance()
+            .remove(&crate::storage::DataKey::BondAsset)
+    });
+    assert_eq!(w.client.get_bond_asset(), None);
+}
+
 // ---- basic submit / bond custody ----
 
 #[test]

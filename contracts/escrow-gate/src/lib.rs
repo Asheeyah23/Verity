@@ -800,6 +800,14 @@ impl EscrowGate {
     pub fn get_admin(e: Env) -> Option<Address> {
         storage::get_admin(&e)
     }
+
+    /// The token every bond and stake is paid in. It is set by the constructor
+    /// and never changes, so a client can read it once to know which token it
+    /// is about to move, and a backend can check it is configured for the
+    /// same one.
+    pub fn get_bond_asset(e: Env) -> Option<Address> {
+        storage::get_bond_asset(&e)
+    }
 }
 
 #[cfg(test)]
