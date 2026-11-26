@@ -22,8 +22,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/_deployment.sh"
 require_commands stellar curl node
 require_deployment
-assert_identities_match
 refuse_public_deployment "The smoke test writes real test submissions on-chain and must never run against it."
+refuse_mainnet_deployment "The smoke test writes real test submissions on-chain and must never run against mainnet."
+assert_identities_match
 
 API_PORT="${VERITY_API_PORT:-3001}"
 AGENT_ALIAS="${SMOKE_AGENT_ALIAS:-agent1}"

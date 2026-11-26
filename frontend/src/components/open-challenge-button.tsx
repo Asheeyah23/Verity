@@ -4,10 +4,18 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "./wallet-provider";
 import { Button } from "./ui/button";
-import { openChallenge, relayChallenge } from "../lib/client-api";
+import { LiveStatus } from "./live-status";
+import { openChallenge, relayChallenge, ActionTimeoutError } from "../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../lib/wallet";
-import { TESTNET_EXPLORER_TX } from "../lib/config";
-import { challengeWindowState, formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../lib/format";
+import { explorerUrl } from "../lib/config";
+import {
+  challengeWindowState,
+  formatUnits,
+  mapTrustlineError,
+  parseUnits,
+  resolveBondAsset,
+  trustlineNote,
+} from "../lib/format";
 import type { BondAsset } from "../lib/types";
 
 const POLL_EVERY_MS = 3000;
@@ -42,6 +50,7 @@ export function OpenChallengeButton({
   const bondInput = editedBondInput ?? (minBondStroops ? formatUnits(minBondStroops, asset.decimals) : "");
   const [busy, setBusy] = useState<null | "checking" | "building" | "signing" | "relaying">(null);
   const [error, setError] = useState<string | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [stalled, setStalled] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -125,6 +134,11 @@ export function OpenChallengeButton({
         reportWrongNetwork(err.message);
         return;
       }
+      if (err instanceof ActionTimeoutError) {
+        setOutcomeUnknown(true);
+      } else {
+        setOutcomeUnknown(false);
+      }
       setError(err instanceof Error ? mapTrustlineError(err, asset.symbol) : "The challenge could not be opened.");
     } finally {
       setBusy(null);
@@ -140,7 +154,7 @@ export function OpenChallengeButton({
             : "Challenge transaction confirmed on testnet. Waiting for the indexer to record it…"}
         </p>
         <a
-          href={TESTNET_EXPLORER_TX(txHash)}
+          href={explorerUrl("tx", txHash, networkPassphrase)}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline-offset-2 hover:underline"
@@ -171,14 +185,26 @@ export function OpenChallengeButton({
 
   if (!account) {
     return (
-      <Button variant="secondary" onClick={login} disabled={connecting}>
+      <Button variant="secondary" onClick={login} disabled={connecting} aria-busy={connecting}>
         {connecting ? "Connecting..." : "Connect wallet to open a challenge"}
       </Button>
     );
   }
 
+  const stepLabel =
+    busy === "checking"
+      ? "Checking Freighter..."
+      : busy === "building"
+        ? "Building transaction..."
+        : busy === "signing"
+          ? "Awaiting signature in Freighter..."
+          : busy === "relaying"
+            ? "Submitting to testnet..."
+            : "Open challenge";
+
   return (
     <div className="space-y-3">
+      <LiveStatus message={busy !== null ? stepLabel : ""} />
       <p className="max-w-prose text-sm text-text-secondary">
         A challenge puts your bond against the agent&apos;s. If re-executors find the work wrong you
         get your bond back plus a share of theirs; if they find it right, your bond goes to the
@@ -198,16 +224,13 @@ export function OpenChallengeButton({
             className="w-36 rounded-lg border border-border-strong bg-surface px-3 py-2 font-mono text-sm outline-none focus:border-accent"
           />
         </div>
-        <Button variant="danger" onClick={handleChallenge} disabled={busy !== null || !networkOk}>
-          {busy === "checking"
-            ? "Checking Freighter..."
-            : busy === "building"
-              ? "Building transaction..."
-              : busy === "signing"
-                ? "Awaiting signature in Freighter..."
-                : busy === "relaying"
-                  ? "Submitting to testnet..."
-                  : "Open challenge"}
+        <Button
+          variant="danger"
+          onClick={handleChallenge}
+          disabled={busy !== null || !networkOk}
+          aria-busy={busy !== null}
+        >
+          {stepLabel}
         </Button>
       </div>
       <p id="challenge-bond-help" className="text-xs text-text-tertiary">
@@ -219,9 +242,22 @@ export function OpenChallengeButton({
         <p className="text-xs text-text-tertiary">{trustlineNote(asset.symbol)}</p>
       )}
       {displayError && (
-        <p role="alert" className="text-sm text-status-slashed">
-          {displayError}
-        </p>
+        <div role="alert" className="text-sm text-status-slashed space-y-2">
+          <p>{displayError}</p>
+          {outcomeUnknown && account && (
+            <p className="text-xs">
+              The transaction may still be on-chain. Check your account on stellar.expert:{" "}
+              <a
+                href={explorerUrl("account", account, networkPassphrase)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline-offset-2 hover:underline"
+              >
+                {account.slice(0, 6)}…{account.slice(-4)}
+              </a>
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

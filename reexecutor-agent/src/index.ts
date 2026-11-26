@@ -1,6 +1,7 @@
 import "dotenv/config";
 import "./net.js";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Keypair } from "@stellar/stellar-sdk";
@@ -23,6 +24,7 @@ import {
 } from "./sep10.js";
 import { NO_OUTPUT_HASH, voteMatches } from "./vote.js";
 import { startHeartbeat, type Heartbeat } from "./heartbeat.js";
+import { findConfigMismatches, type BackendConfig } from "./config.js";
 
 const DEFAULT_VOTING_BLOCK_MS = 60_000;
 const DEFAULT_RESYNC_COOLDOWN_MS = 60_000;
@@ -34,6 +36,45 @@ function requireEnv(name: string): string {
     process.exit(1);
   }
   return value;
+}
+
+/** Reads the signing key from REEXECUTOR_SECRET_KEY or from the file named by
+ * REEXECUTOR_SECRET_KEY_FILE (trimmed), so container deployments can mount a
+ * secret file instead of exposing the key in `docker inspect` or process.env.
+ * Refuses to start when both are set, when neither is set, or when the file is
+ * unreadable or empty. */
+function secretKeyEnv(): string {
+  const fromEnv = process.env.REEXECUTOR_SECRET_KEY;
+  const fromFile = process.env.REEXECUTOR_SECRET_KEY_FILE;
+  const hasEnv = fromEnv !== undefined && fromEnv !== "";
+  const hasFile = fromFile !== undefined && fromFile !== "";
+  if (hasEnv && hasFile) {
+    console.error("[reexecutor-agent] set either REEXECUTOR_SECRET_KEY or REEXECUTOR_SECRET_KEY_FILE, not both");
+    process.exit(1);
+  }
+  if (hasFile) {
+    const filePath = fromFile.trim();
+    let key: string;
+    try {
+      key = readFileSync(filePath, "utf8").trim();
+    } catch (err) {
+      console.error(
+        `[reexecutor-agent] failed to read REEXECUTOR_SECRET_KEY_FILE (${filePath}): ${(err as Error).message}`
+      );
+      process.exit(1);
+    }
+    if (!key) {
+      console.error(`[reexecutor-agent] REEXECUTOR_SECRET_KEY_FILE (${filePath}) is empty`);
+      process.exit(1);
+    }
+    return key;
+  }
+  const key = fromEnv?.trim();
+  if (key) return key;
+  console.error(
+    "[reexecutor-agent] REEXECUTOR_SECRET_KEY or REEXECUTOR_SECRET_KEY_FILE is required (see reexecutor-agent/.env.example)"
+  );
+  process.exit(1);
 }
 
 /** A numeric setting: unset or empty uses `fallback`; anything else must be a
@@ -472,6 +513,26 @@ export function createWorker(options: WorkerOptions): ReexecutorWorker {
   };
 }
 
+async function verifyBackendConfig(backendUrl: string, contractId: string, networkPassphrase: string): Promise<void> {
+  const res = await fetch(`${backendUrl}/v1/config`);
+  if (!res.ok) throw new Error(`GET /v1/config failed: HTTP ${res.status}`);
+  const remote: unknown = await res.json();
+  if (!remote || typeof remote !== "object") {
+    throw new Error("GET /v1/config returned an unexpected payload");
+  }
+  const mismatches = findConfigMismatches(
+    { contractId, networkPassphrase },
+    remote as BackendConfig
+  );
+  if (mismatches.length > 0) {
+    console.error(`[reexecutor-agent] refusing to start: backend at ${backendUrl} does not match this worker's configuration:`);
+    for (const mismatch of mismatches) {
+      console.error(`[reexecutor-agent]   ${mismatch}`);
+    }
+    process.exit(1);
+  }
+}
+
 async function main() {
   const backendUrl = process.env.BACKEND_URL ?? "http://localhost:3001";
   const networkPassphrase = process.env.NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
@@ -498,7 +559,7 @@ async function main() {
   const sep10HomeDomain = process.env.SEP10_HOME_DOMAIN;
   const sep10WebAuthDomain = process.env.SEP10_WEB_AUTH_DOMAIN;
 
-  const keypair = Keypair.fromSecret(requireEnv("REEXECUTOR_SECRET_KEY"));
+  const keypair = Keypair.fromSecret(secretKeyEnv());
   const publicKey = keypair.publicKey();
   const tag = `[reexecutor ${publicKey.slice(0, 8)}]`;
 
@@ -594,6 +655,7 @@ async function main() {
   console.log(
     `[reexecutor-agent] SEP-10 server key ${sep10.serverKey.slice(0, 8)}… home domain ${sep10.homeDomain} web-auth domain ${sep10.webAuthDomain}`
   );
+  await verifyBackendConfig(backendUrl, contractId, networkPassphrase);
   // Mirrors this account's real on-chain stake into the backend, so an
   // account staked by script (or long ago) is assignable without re-staking.
   const reexecutor = await worker.sync();

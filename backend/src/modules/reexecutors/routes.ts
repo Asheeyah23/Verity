@@ -7,6 +7,7 @@ import { env } from "../../config/env.js";
 import { escrowGateFor, escrowGateAsKeeper } from "../../chain/clients.js";
 import { assertGateCall, assertSimulated, buildWithAccountCheck, relaySignedXdr } from "../../chain/rpc.js";
 import { getGateConfig } from "../../chain/config.js";
+import { canCastVote, eligibilityFrom, type VoteEligibility } from "./assignment.js";
 
 const positiveStroops = z.string().regex(/^[1-9]\d*$/, "must be a positive integer amount in stroops");
 
@@ -65,13 +66,13 @@ function loadReexecutor(id: string) {
  * nothing computes it, and a constant is not a reputation. `online` and
  * `can_vote` are derived from real state — the worker's last poll, and the
  * contract's own eligibility rules. */
-function present(row: NonNullable<ReexecutorRow>, stats: ReexecutorStats, allowlist: boolean) {
+function present(row: NonNullable<ReexecutorRow>, stats: ReexecutorStats, rules: VoteEligibility) {
   const { reputation_score: _unused, ...rest } = row;
   const lastSeen = row.last_seen_at ? new Date(row.last_seen_at).getTime() : null;
   return {
     ...rest,
     online: lastSeen !== null && Date.now() - lastSeen < env.REEXECUTOR_LIVENESS_S * 1000,
-    can_vote: row.active && (!allowlist || row.approved),
+    can_vote: canCastVote(row, rules),
     stats,
   };
 }
@@ -216,7 +217,7 @@ export async function reexecutorsRoutes(app: FastifyInstance) {
       .execute();
     const [stats, cfg] = await Promise.all([statsByReexecutor(params.id), getGateConfig()]);
     return {
-      reexecutor: present(row, stats.get(row.id) ?? NO_STATS, cfg.reexecutor_allowlist),
+      reexecutor: present(row, stats.get(row.id) ?? NO_STATS, eligibilityFrom(cfg)),
       slashing_events: slashes,
     };
   });
@@ -238,7 +239,7 @@ export async function reexecutorsRoutes(app: FastifyInstance) {
       .orderBy("joined_at")
       .execute();
     const [stats, cfg] = await Promise.all([statsByReexecutor(), getGateConfig()]);
-    return rows.map((row) => present(row, stats.get(row.id) ?? NO_STATS, cfg.reexecutor_allowlist));
+    return rows.map((row) => present(row, stats.get(row.id) ?? NO_STATS, eligibilityFrom(cfg)));
   });
 
   // Liveness signal that does not depend on the work loop: a worker busy on

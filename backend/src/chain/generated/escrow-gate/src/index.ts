@@ -298,6 +298,15 @@ export interface Client {
   update_config: ({admin, config}: {admin: string, config: ConfigRecord}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
+   * Construct and simulate a get_bond_asset transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * The token every bond and stake is paid in. It is set by the constructor
+   * and never changes, so a client can read it once to know which token it
+   * is about to move, and a backend can check it is configured for the
+   * same one.
+   */
+  get_bond_asset: (options?: MethodOptions) => Promise<AssembledTransaction<Option<string>>>
+
+  /**
    * Construct and simulate a get_submission transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   get_submission: ({id}: {id: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Option<SubmissionRecord>>>
@@ -400,6 +409,7 @@ export class Client extends ContractClient {
         "AAAAAAAAAgJBbnkgYWNjb3VudCB3aXRoIHN1ZmZpY2llbnQgYWN0aXZlIHN0YWtlIG1heSBhdHRlc3Qgb24gYW55IHN1Ym1pc3Npb24KKG9mZi1jaGFpbiBhc3NpZ25tZW50L3NjaGVkdWxpbmcgaXMgdGhlIGJhY2tlbmQncyBqb2IsIG5vdCBhbiBvbi1jaGFpbgpnYXRlKSDigJQgdW5sZXNzIENvbmZpZ1JlY29yZDo6cmVleGVjdXRvcl9hbGxvd2xpc3QgaXMgb24sIGluIHdoaWNoIGNhc2UKdGhlIGFkbWluIG11c3QgYWxzbyBoYXZlIGFwcHJvdmVkIHRoZSBhY2NvdW50LiBPbmUgdm90ZSBwZXIKKHN1Ym1pc3Npb24sIHJlZXhlY3V0b3IpLCBlbmZvcmNlZCBieSB0aGUgUmVwbGF5QXR0ZXN0YXRpb24gc3RvcmFnZQpndWFyZC4gUmVjb3JkcyB0aGUgcmF3IG91dHB1dCBoYXNoIGFsb25nc2lkZSB0aGUgdm90ZSBmb3IgbGF0ZXIKb2ZmLWNoYWluIGF1ZGl0OyB0aGUgY29udHJhY3QgaXRzZWxmIG9ubHkgdHJ1c3RzIHRoZSBib29sZWFuIGBtYXRjaGVkYApjbGFpbSBwbHVzIGJvbmRlZC1tYWpvcml0eSBlY29ub21pY3MuAAAAAAANYXR0ZXN0X3JlcGxheQAAAAAAAAQAAAAAAAAACnJlZXhlY3V0b3IAAAAAABMAAAAAAAAADXN1Ym1pc3Npb25faWQAAAAAAAAGAAAAAAAAAAtvdXRwdXRfaGFzaAAAAAPuAAAAIAAAAAAAAAAHbWF0Y2hlZAAAAAABAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAAAAAAANZ2V0X2NoYWxsZW5nZQAAAAAAAAEAAAAAAAAAAmlkAAAAAAAGAAAAAQAAA+gAAAfQAAAAD0NoYWxsZW5nZVJlY29yZAA=",
         "AAAAAAAAASFBZG1pbi1nYXRlZCwgYWRkaXRpdmUgY2FwYWJpbGl0eSBjaGFuZ2Ugb25seSAod2hpY2gga25vYnMgZnV0dXJlCnN1Ym1pc3Npb25zIHVzZSkg4oCUIG5ldmVyIGEgcGVyLXN1Ym1pc3Npb24gb3IgcGVyLWRpc3B1dGUgb3ZlcnJpZGUuCkV2ZXJ5IFN1Ym1pc3Npb25SZWNvcmQgc25hcHNob3RzIHRoZSBjb25maWcgdmFsdWVzIHRoYXQgZ292ZXJuIGl0IGF0CnN1Ym1pdCgpIHRpbWUsIHNvIHRoaXMgY2FuIG5ldmVyIHJldHJvYWN0aXZlbHkgY2hhbmdlIGFuIGluLWZsaWdodApzdWJtaXNzaW9uJ3MgcnVsZXMuAAAAAAAADXVwZGF0ZV9jb25maWcAAAAAAAACAAAAAAAAAAVhZG1pbgAAAAAAABMAAAAAAAAABmNvbmZpZwAAAAAH0AAAAAxDb25maWdSZWNvcmQAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAANtUaGUgdG9rZW4gZXZlcnkgYm9uZCBhbmQgc3Rha2UgaXMgcGFpZCBpbi4gSXQgaXMgc2V0IGJ5IHRoZSBjb25zdHJ1Y3RvcgphbmQgbmV2ZXIgY2hhbmdlcywgc28gYSBjbGllbnQgY2FuIHJlYWQgaXQgb25jZSB0byBrbm93IHdoaWNoIHRva2VuIGl0CmlzIGFib3V0IHRvIG1vdmUsIGFuZCBhIGJhY2tlbmQgY2FuIGNoZWNrIGl0IGlzIGNvbmZpZ3VyZWQgZm9yIHRoZQpzYW1lIG9uZS4AAAAADmdldF9ib25kX2Fzc2V0AAAAAAAAAAAAAQAAA+gAAAAT",
         "AAAAAAAAAAAAAAAOZ2V0X3N1Ym1pc3Npb24AAAAAAAEAAAAAAAAAAmlkAAAAAAAGAAAAAQAAA+gAAAfQAAAAEFN1Ym1pc3Npb25SZWNvcmQ=",
         "AAAAAAAAAD5Cb25kLXByb3BvcnRpb25hbCwgc25hcHNob3R0ZWQgYXQgc3VibWl0KCkgdGltZSAoaW52YXJpYW50IDUpLgAAAAAADm9wZW5fY2hhbGxlbmdlAAAAAAADAAAAAAAAAApjaGFsbGVuZ2VyAAAAAAATAAAAAAAAAA1zdWJtaXNzaW9uX2lkAAAAAAAABgAAAAAAAAAEYm9uZAAAAAsAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAaNCbG9ja2VkIGVudGlyZWx5IHdoaWxlIGFueSBvZiB0aGlzIHJlZXhlY3V0b3IncyBhdHRlc3RhdGlvbnMgc2l0IG9uIGEKbm90LXlldC1maW5hbGl6ZWQgc3VibWlzc2lvbiDigJQgc2VlIHJlbGVhc2VfYXR0ZXN0YXRpb25fbG9jay4gQSB2b3RlIGlzCndlaWdodGVkIGJ5IHRoZSBmdWxsIHN0YWtlIGF0IHRoZSBtb21lbnQgaXQgaXMgY2FzdCwgYnV0IGEgc2xhc2ggdGFrZXMgYQpzaGFyZSBvZiB0aGUgc3Rha2UgYXQgc2xhc2ggdGltZSwgc28gYW55IHN0YWtlIGFsbG93ZWQgdG8gbGVhdmUgYmVmb3JlCnRoZW4gd291bGQgYmUgd2VpZ2h0IHRoYXQgd2FzIG5ldmVyIGF0IHJpc2suIEEgcmVleGVjdXRvciB3aXRoIHplcm8Kb3BlbiBhdHRlc3RhdGlvbnMgbWF5IHdpdGhkcmF3IGluIGZ1bGwsIGRlYWN0aXZhdGluZyB0aGVtc2VsdmVzLgAAAAAOd2l0aGRyYXdfc3Rha2UAAAAAAAIAAAAAAAAACnJlZXhlY3V0b3IAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAAAgAAAAM=",
@@ -440,6 +450,7 @@ export class Client extends ContractClient {
         attest_replay: this.txFromJSON<Result<void>>,
         get_challenge: this.txFromJSON<Option<ChallengeRecord>>,
         update_config: this.txFromJSON<Result<void>>,
+        get_bond_asset: this.txFromJSON<Option<string>>,
         get_submission: this.txFromJSON<Option<SubmissionRecord>>,
         open_challenge: this.txFromJSON<Result<void>>,
         withdraw_stake: this.txFromJSON<Result<void>>,

@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../../components/wallet-provider";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
-import { uploadArtifact, createSubmission, relaySubmission } from "../../../lib/client-api";
+import { LiveStatus } from "../../../components/live-status";
+import { uploadArtifact, createSubmission, relaySubmission, ActionTimeoutError } from "../../../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
+import { explorerUrl } from "../../../lib/config";
 import { canonicalJson, parseJsonOrText } from "../../../lib/canonical";
 import { EXAMPLES, EXAMPLE_LIST, generateExampleEscrowRef, type ExampleId, type SubmissionExample } from "../../../lib/examples";
 import { bpsToPercent, formatDuration, formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../../../lib/format";
@@ -77,6 +79,7 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
   const [activeExample, setActiveExample] = useState<ExampleId | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
 
   const filledExample = activeExample ? EXAMPLE_LIST.find((e) => e.id === activeExample) ?? null : null;
 
@@ -205,12 +208,31 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
         setStep("idle");
         return;
       }
+      if (err instanceof ActionTimeoutError) {
+        setOutcomeUnknown(true);
+      } else {
+        setOutcomeUnknown(false);
+      }
       setError(err instanceof Error ? mapTrustlineError(err, asset.symbol) : "Submission failed.");
       setStep("error");
     }
   }
 
   const busy = step !== "idle" && step !== "error";
+  const stepLabel =
+    step === "checking"
+      ? "Checking Freighter..."
+      : step === "uploading"
+        ? "Uploading artifacts..."
+        : step === "building"
+          ? "Building transaction..."
+          : step === "signing"
+            ? "Awaiting signature in Freighter..."
+            : step === "relaying"
+              ? "Submitting to testnet..."
+              : step === "done"
+                ? "Confirmed. Opening the submission..."
+                : "Submit for verification";
   const wrongNetworkNotice = !networkOk
     ? problem?.code === "wrong-network"
       ? problem.message
@@ -435,29 +457,36 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
       </Card>
 
       {displayError && (
-        <p role="alert" className="text-sm text-status-slashed">
-          {displayError}
-        </p>
+        <div role="alert" className="text-sm text-status-slashed space-y-2">
+          <p>{displayError}</p>
+          {outcomeUnknown && account && (
+            <p className="text-xs">
+              The transaction may still be on-chain. Check your account on stellar.expert:{" "}
+              <a
+                href={explorerUrl("account", account, config.network_passphrase)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline-offset-2 hover:underline"
+              >
+                {account.slice(0, 6)}…{account.slice(-4)}
+              </a>
+            </p>
+          )}
+        </div>
       )}
 
+      <LiveStatus message={busy ? stepLabel : ""} />
+
       {account ? (
-        <Button onClick={handleSubmit} disabled={busy || !networkOk || !escrowRefTrimmed || !inputContent || !outputContent}>
-          {step === "checking"
-            ? "Checking Freighter..."
-            : step === "uploading"
-              ? "Uploading artifacts..."
-              : step === "building"
-                ? "Building transaction..."
-                : step === "signing"
-                  ? "Awaiting signature in Freighter..."
-                  : step === "relaying"
-                    ? "Submitting to testnet..."
-                    : step === "done"
-                      ? "Confirmed. Opening the submission..."
-                      : "Submit for verification"}
+        <Button
+          onClick={handleSubmit}
+          disabled={busy || !networkOk || !escrowRefTrimmed || !inputContent || !outputContent}
+          aria-busy={busy}
+        >
+          {stepLabel}
         </Button>
       ) : (
-        <Button onClick={login} disabled={connecting}>
+        <Button onClick={login} disabled={connecting} aria-busy={connecting}>
           {connecting ? "Connecting..." : "Connect wallet to continue"}
         </Button>
       )}

@@ -4,17 +4,29 @@ import { useState } from "react";
 import { useWallet } from "./wallet-provider";
 import { Button } from "./ui/button";
 import { fundTestnetAccount } from "../lib/client-api";
+import { isTestnetPassphrase, NETWORK_PASSPHRASE } from "../lib/config";
 import type { BondAsset } from "../lib/types";
 
 /** Asks the testnet faucet for test XLM for the connected account. On a
  * non-native bond deployment, Friendbot only covers XLM transaction fees;
- * bonds and stakes require a trustline and balance in the bond asset. */
-export function FundAccountButton({ bondAsset }: { bondAsset?: Pick<BondAsset, "symbol"> }) {
+ * bonds and stakes require a trustline and balance in the bond asset.
+ * Hidden when the deployment is not on Stellar testnet. */
+export function FundAccountButton({
+  bondAsset,
+  networkPassphrase = NETWORK_PASSPHRASE,
+}: {
+  bondAsset?: Pick<BondAsset, "symbol">;
+  networkPassphrase?: string;
+} = {}) {
   const { account, connecting, login } = useWallet();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const symbol = bondAsset?.symbol ?? "XLM";
   const isNative = symbol === "XLM";
+
+  if (!isTestnetPassphrase(networkPassphrase)) {
+    return null;
+  }
 
   async function handleFund() {
     setBusy(true);
