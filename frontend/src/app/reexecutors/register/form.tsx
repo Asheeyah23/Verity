@@ -7,8 +7,14 @@ import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button, buttonClasses } from "../../../components/ui/button";
 import { registerReexecutor, relayReexecutorStake, ActionTimeoutError } from "../../../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
-import { NETWORK_PASSPHRASE, TESTNET_EXPLORER_TX, TESTNET_EXPLORER_ACCOUNT } from "../../../lib/config";
-import { formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../../../lib/format";
+import { NETWORK_PASSPHRASE, explorerUrl } from "../../../lib/config";
+import {
+  formatUnits,
+  mapTrustlineError,
+  parseUnits,
+  resolveBondAsset,
+  trustlineNote,
+} from "../../../lib/format";
 import type { GateConfig } from "../../../lib/types";
 
 type Status = "idle" | "checking" | "building" | "signing" | "relaying" | "done" | "error";
@@ -69,7 +75,7 @@ pnpm --filter @verity/reexecutor-agent start`;
 
       setStatus("signing");
       const signed = await signXdr(unsigned_transaction_xdr, {
-        networkPassphrase: config.network_passphrase,
+        networkPassphrase: config.network_passphrase || NETWORK_PASSPHRASE,
         address: account,
       });
 
@@ -158,7 +164,7 @@ pnpm --filter @verity/reexecutor-agent start`;
                   View your re-executor page
                 </Link>
                 <a
-                  href={TESTNET_EXPLORER_TX(result.txHash)}
+                  href={explorerUrl("tx", result.txHash, config.network_passphrase)}
                   target="_blank"
                   rel="noreferrer"
                   className="text-accent underline-offset-2 hover:underline"
@@ -198,7 +204,7 @@ pnpm --filter @verity/reexecutor-agent start`;
                     <p className="text-xs">
                       The transaction may still be on-chain. Check your account on stellar.expert:{" "}
                       <a
-                        href={TESTNET_EXPLORER_ACCOUNT(account)}
+                        href={explorerUrl("account", account, config.network_passphrase)}
                         target="_blank"
                         rel="noreferrer"
                         className="text-accent underline-offset-2 hover:underline"

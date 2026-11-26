@@ -5,7 +5,7 @@ import type { GateConfig, Reexecutor, Submission, VerificationRatesReport } from
 import { buttonClasses } from "../components/ui/button";
 import { VerdictBadge } from "../components/verdict-badge";
 import { FundAccountButton } from "../components/fund-account-button";
-import { FREIGHTER_INSTALL_URL, TESTNET_EXPLORER_CONTRACT } from "../lib/config";
+import { FREIGHTER_INSTALL_URL, explorerUrl, isTestnetPassphrase } from "../lib/config";
 import {
   bpsToPercent,
   formatDuration,
@@ -56,6 +56,7 @@ export default async function HomePage() {
     ? reexecutors.value.filter((r) => r.online && r.can_vote).length
     : null;
   const asset = resolveBondAsset(config.bond_asset);
+  const onTestnet = isTestnetPassphrase(config.network_passphrase);
 
   return (
     <div className="space-y-20">
@@ -204,7 +205,7 @@ export default async function HomePage() {
             <li>This is Stellar testnet. The {asset.symbol} has no value and the contracts are unaudited.</li>
           </ul>
           <a
-            href={TESTNET_EXPLORER_CONTRACT(config.escrow_gate_contract_id)}
+            href={explorerUrl("contract", config.escrow_gate_contract_id, config.network_passphrase)}
             target="_blank"
             rel="noreferrer"
             className={`mt-5 inline-block font-mono text-xs ${linkClass}`}
@@ -215,7 +216,9 @@ export default async function HomePage() {
       </section>
 
       <section>
-        <h2 className="text-2xl font-semibold tracking-tight">Try it with a testnet wallet</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          {onTestnet ? "Try it with a testnet wallet" : "Connect a Stellar wallet"}
+        </h2>
         <p className="mt-2 max-w-[60ch] text-sm leading-relaxed text-text-secondary">
           Every action here is a transaction you sign yourself. Verity never holds your key.
         </p>
@@ -230,23 +233,26 @@ export default async function HomePage() {
             </a>
           </li>
           <li>
-            <h3 className="text-sm font-medium">Switch it to Testnet</h3>
+            <h3 className="text-sm font-medium">{onTestnet ? "Switch it to Testnet" : "Match the configured network"}</h3>
             <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-              In Freighter, open the network menu and choose Test Net. Connecting on any other
-              network is refused, so real funds are never at risk here.
+              {onTestnet
+                ? "In Freighter, open the network menu and choose Test Net. Connecting on any other network is refused, so real funds are never at risk here."
+                : "In Freighter, select the network matching this deployment. Connecting on any other network is refused."}
             </p>
           </li>
-          <li>
-            <h3 className="text-sm font-medium">Connect, then get test XLM</h3>
-            <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-              {asset.symbol === "XLM"
-                ? "Bonds and stakes need a balance. Friendbot, the testnet faucet, sends 10,000 test XLM to a new account."
-                : `Transaction fees need test XLM. Friendbot, the testnet faucet, sends 10,000 test XLM to a new account; bonds and stakes also need a ${asset.symbol} trustline and balance.`}
-            </p>
-            <div className="mt-4">
-              <FundAccountButton bondAsset={asset} />
-            </div>
-          </li>
+          {onTestnet && (
+            <li>
+              <h3 className="text-sm font-medium">Connect, then get test XLM</h3>
+              <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+                {asset.symbol === "XLM"
+                  ? "Bonds and stakes need a balance. Friendbot, the testnet faucet, sends 10,000 test XLM to a new account."
+                  : `Transaction fees need test XLM. Friendbot, the testnet faucet, sends 10,000 test XLM to a new account; bonds and stakes also need a ${asset.symbol} trustline and balance.`}
+              </p>
+              <div className="mt-4">
+                <FundAccountButton bondAsset={asset} networkPassphrase={config.network_passphrase} />
+              </div>
+            </li>
+          )}
         </ol>
         <p className="mt-10 max-w-[65ch] text-sm leading-relaxed text-text-secondary">
           Then{" "}

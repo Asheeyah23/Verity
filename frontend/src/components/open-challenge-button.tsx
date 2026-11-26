@@ -6,8 +6,15 @@ import { useWallet } from "./wallet-provider";
 import { Button } from "./ui/button";
 import { openChallenge, relayChallenge, ActionTimeoutError } from "../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../lib/wallet";
-import { TESTNET_EXPLORER_TX, TESTNET_EXPLORER_ACCOUNT } from "../lib/config";
-import { challengeWindowState, formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../lib/format";
+import { explorerUrl } from "../lib/config";
+import {
+  challengeWindowState,
+  formatUnits,
+  mapTrustlineError,
+  parseUnits,
+  resolveBondAsset,
+  trustlineNote,
+} from "../lib/format";
 import type { BondAsset } from "../lib/types";
 
 const POLL_EVERY_MS = 3000;
@@ -146,7 +153,7 @@ export function OpenChallengeButton({
             : "Challenge transaction confirmed on testnet. Waiting for the indexer to record it…"}
         </p>
         <a
-          href={TESTNET_EXPLORER_TX(txHash)}
+          href={explorerUrl("tx", txHash, networkPassphrase)}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline-offset-2 hover:underline"
@@ -231,7 +238,7 @@ export function OpenChallengeButton({
             <p className="text-xs">
               The transaction may still be on-chain. Check your account on stellar.expert:{" "}
               <a
-                href={TESTNET_EXPLORER_ACCOUNT(account)}
+                href={explorerUrl("account", account, networkPassphrase)}
                 target="_blank"
                 rel="noreferrer"
                 className="text-accent underline-offset-2 hover:underline"

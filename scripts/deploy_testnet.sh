@@ -10,11 +10,15 @@
 # (scripts/bootstrap_reexecutors.sh) and the database reset.
 #
 #   VERITY_DEPLOYMENT   deployment name (default: testnet, the dev deployment)
+#   VERITY_NETWORK      testnet (default) or mainnet (requires the mainnet flag)
+#   VERITY_RPC_URL      Soroban RPC URL recorded in deployments/<name>.json
 #   --public            mark the deployment as one real users are on; the dev
 #                       runner and smoke test will refuse to touch it
 #   --force             replace an existing deployments/<name>.json
 #   --replace-public    required in addition to --force when replacing a deployment
 #                       record marked "public": true
+#   --mainnet-i-have-read-docs-MAINNET
+#                       required alongside VERITY_NETWORK=mainnet
 #   VERITY_GATE_CONFIG  full EscrowGate ConfigRecord JSON, to override defaults
 set -euo pipefail
 
@@ -26,14 +30,41 @@ source "$ROOT_DIR/scripts/_deployment.sh"
 PUBLIC=false
 FORCE=0
 REPLACE_PUBLIC=0
+MAINNET_ACK=0
 for arg in "$@"; do
   case "$arg" in
     --public) PUBLIC=true ;;
     --force) FORCE=1 ;;
     --replace-public) REPLACE_PUBLIC=1 ;;
+    --mainnet-i-have-read-docs-MAINNET) MAINNET_ACK=1 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
+
+NETWORK="${VERITY_NETWORK:-testnet}"
+case "$NETWORK" in
+  testnet)
+    if [ "$MAINNET_ACK" = 1 ]; then
+      echo "FATAL: --mainnet-i-have-read-docs-MAINNET requires VERITY_NETWORK=mainnet." >&2
+      exit 2
+    fi
+    NETWORK_PASSPHRASE="$TESTNET_PASSPHRASE"
+    SOROBAN_RPC_URL="${VERITY_RPC_URL:-${_CALLER_SOROBAN_RPC_URL:-$TESTNET_RPC_URL}}"
+    ;;
+  mainnet)
+    if [ "$MAINNET_ACK" != 1 ]; then
+      echo "FATAL: VERITY_NETWORK=mainnet requires --mainnet-i-have-read-docs-MAINNET." >&2
+      echo "       Verity is not ready for mainnet; read docs/MAINNET.md first." >&2
+      exit 1
+    fi
+    NETWORK_PASSPHRASE="$MAINNET_PASSPHRASE"
+    SOROBAN_RPC_URL="${VERITY_RPC_URL:-${_CALLER_SOROBAN_RPC_URL:-$SOROBAN_RPC_URL}}"
+    ;;
+  *)
+    echo "FATAL: VERITY_NETWORK must be 'testnet' or 'mainnet' (got '$NETWORK')." >&2
+    exit 2
+    ;;
+esac
 
 if [ -f "$DEPLOY_JSON" ] && [ "$FORCE" != 1 ]; then
   echo "FATAL: $DEPLOY_JSON already exists." >&2
@@ -75,15 +106,45 @@ if [ "$DEPLOYMENT" = testnet ]; then
   IDENTITIES+=(challenger1)
 fi
 
-echo "==> Deployment '$DEPLOYMENT' (public: $PUBLIC)"
+account_is_funded() {
+  local addr="$1" response
+  [ -n "$SOROBAN_RPC_URL" ] || return 1
+  response="$(curl -fsS --connect-timeout 5 --max-time 15 \
+    -H 'content-type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":{\"address\":\"$addr\"}}" \
+    "$SOROBAN_RPC_URL" 2>/dev/null || true)"
+  echo "$response" | grep -q '"result"[[:space:]]*:'
+}
+
+echo "==> Deployment '$DEPLOYMENT' (network: $NETWORK, public: $PUBLIC)"
 echo "==> Ensuring identities exist and are funded"
-for name in "${IDENTITIES[@]}"; do
-  if ! stellar keys address "$name" >/dev/null 2>&1; then
-    stellar keys generate "$name" --network "$NETWORK" --fund
-  else
-    stellar keys fund "$name" --network "$NETWORK" || true
+if [ "$NETWORK" = mainnet ]; then
+  unfunded=()
+  for name in "${IDENTITIES[@]}"; do
+    if ! addr="$(stellar keys address "$name" 2>/dev/null)" || [ -z "$addr" ]; then
+      unfunded+=("$name (missing from keystore)")
+    elif ! account_is_funded "$addr"; then
+      unfunded+=("$name ($addr)")
+    fi
+  done
+  if [ "${#unfunded[@]}" -gt 0 ]; then
+    echo "FATAL: mainnet identities must already exist and be funded; Friendbot (--fund) is never used on mainnet." >&2
+    echo "       Missing or unfunded identities: ${unfunded[*]}" >&2
+    exit 1
   fi
-done
+  if [ -z "$SOROBAN_RPC_URL" ]; then
+    echo "FATAL: mainnet deployment requires VERITY_RPC_URL (or SOROBAN_RPC_URL) to be set." >&2
+    exit 1
+  fi
+else
+  for name in "${IDENTITIES[@]}"; do
+    if ! stellar keys address "$name" >/dev/null 2>&1; then
+      stellar keys generate "$name" --network "$NETWORK" --fund
+    else
+      stellar keys fund "$name" --network "$NETWORK" || true
+    fi
+  done
+fi
 
 DEPLOYER_ADDR=$(stellar keys address "$DEPLOYER")
 echo "==> Deployer / admin: $DEPLOYER_ADDR"
@@ -189,6 +250,7 @@ cat > "$DEPLOY_JSON.tmp" <<EOF
   "public": $PUBLIC,
   "network": "$NETWORK",
   "network_passphrase": "$NETWORK_PASSPHRASE",
+  "rpc_url": "$SOROBAN_RPC_URL",
   "escrow_gate_contract_id": "$GATE_ID",
   "zk_verifier_registry_contract_id": "$REGISTRY_ID",
   "bond_asset": "$BOND_ASSET",

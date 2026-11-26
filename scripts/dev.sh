@@ -22,6 +22,7 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/_deployment.sh"
 require_deployment
 refuse_public_deployment "pnpm dev is the local development runner; a public deployment runs from the container stack (docs/DEPLOY.md)."
+refuse_mainnet_deployment "pnpm dev is the local development runner and must never run against mainnet (docs/MAINNET.md)."
 assert_identities_match
 
 API_PORT="${VERITY_API_PORT:-3001}"
@@ -187,7 +188,7 @@ echo
 echo "Verity is up (Ctrl+C stops everything):"
 echo "  API       http://localhost:$API_PORT"
 [ "$RUN_WEB" = 1 ] && echo "  Dashboard http://localhost:$WEB_PORT"
-echo "  EscrowGate $GATE_ID (deployment '$DEPLOYMENT', testnet)"
+echo "  EscrowGate $GATE_ID (deployment '$DEPLOYMENT', $NETWORK)"
 echo "  End-to-end check, in another terminal:  VERITY_API_PORT=$API_PORT pnpm smoke"
 echo
 wait

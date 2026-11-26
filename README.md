@@ -74,6 +74,7 @@ and `backend/src/chain/canonical.ts`.
 | `deployments/<name>.json` | Deployed contract IDs and public keys, one file per deployment |
 | `scripts/` | Deploy, bootstrap, approve, bindings, dev runner, smoke test |
 | `docs/DEPLOY.md` | Running a public deployment from the container images |
+| `docs/MAINNET.md` | Mainnet readiness checklist and current blockers |
 
 ## Run it
 
@@ -790,7 +791,8 @@ full tally.
 
 ## Known limits
 
-- **Testnet only. Contracts are unaudited.**
+- **Testnet only. Contracts are unaudited.** See [`docs/MAINNET.md`](docs/MAINNET.md)
+  for the mainnet readiness checklist and every current blocker.
 - **What "verified" covers.** The input and claimed-output hashes are
   committed on-chain; the function is stored by hash but not committed. A
   verdict means "consistent with the artifacts the agent declared".

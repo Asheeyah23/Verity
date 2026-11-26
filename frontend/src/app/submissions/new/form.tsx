@@ -7,7 +7,7 @@ import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { uploadArtifact, createSubmission, relaySubmission, ActionTimeoutError } from "../../../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
-import { TESTNET_EXPLORER_TX, TESTNET_EXPLORER_ACCOUNT } from "../../../lib/config";
+import { explorerUrl } from "../../../lib/config";
 import { canonicalJson, parseJsonOrText } from "../../../lib/canonical";
 import { EXAMPLES, EXAMPLE_LIST, generateExampleEscrowRef, type ExampleId, type SubmissionExample } from "../../../lib/examples";
 import { bpsToPercent, formatDuration, formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../../../lib/format";
@@ -448,7 +448,7 @@ export function NewSubmissionForm({ config }: { config: GateConfig }) {
             <p className="text-xs">
               The transaction may still be on-chain. Check your account on stellar.expert:{" "}
               <a
-                href={TESTNET_EXPLORER_ACCOUNT(account)}
+                href={explorerUrl("account", account, config.network_passphrase)}
                 target="_blank"
                 rel="noreferrer"
                 className="text-accent underline-offset-2 hover:underline"
