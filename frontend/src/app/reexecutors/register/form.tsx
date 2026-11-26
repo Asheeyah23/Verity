@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useWallet } from "../../../components/wallet-provider";
 import { Card, CardBody, CardHeader } from "../../../components/ui/card";
 import { Button, buttonClasses } from "../../../components/ui/button";
-import { registerReexecutor, relayReexecutorStake } from "../../../lib/client-api";
+import { registerReexecutor, relayReexecutorStake, ActionTimeoutError } from "../../../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../../../lib/wallet";
-import { NETWORK_PASSPHRASE, TESTNET_EXPLORER_TX } from "../../../lib/config";
+import { NETWORK_PASSPHRASE, TESTNET_EXPLORER_TX, TESTNET_EXPLORER_ACCOUNT } from "../../../lib/config";
 import { formatUnits, mapTrustlineError, parseUnits, resolveBondAsset, trustlineNote } from "../../../lib/format";
 import type { GateConfig } from "../../../lib/types";
 
@@ -24,6 +24,7 @@ export function RegisterReexecutorForm({ config }: { config: GateConfig }) {
   );
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [result, setResult] = useState<{ id: string; txHash: string; stake: bigint } | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -81,6 +82,11 @@ pnpm --filter @verity/reexecutor-agent start`;
         reportWrongNetwork(err.message);
         setStatus("idle");
         return;
+      }
+      if (err instanceof ActionTimeoutError) {
+        setOutcomeUnknown(true);
+      } else {
+        setOutcomeUnknown(false);
       }
       setError(err instanceof Error ? mapTrustlineError(err, asset.symbol) : "Registration failed.");
       setStatus("error");
@@ -186,9 +192,22 @@ pnpm --filter @verity/reexecutor-agent start`;
               </div>
 
               {displayError && (
-                <p role="alert" className="text-sm text-status-slashed">
-                  {displayError}
-                </p>
+                <div role="alert" className="text-sm text-status-slashed space-y-2">
+                  <p>{displayError}</p>
+                  {outcomeUnknown && account && (
+                    <p className="text-xs">
+                      The transaction may still be on-chain. Check your account on stellar.expert:{" "}
+                      <a
+                        href={TESTNET_EXPLORER_ACCOUNT(account)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-accent underline-offset-2 hover:underline"
+                      >
+                        {account.slice(0, 6)}…{account.slice(-4)}
+                      </a>
+                    </p>
+                  )}
+                </div>
               )}
 
               {account ? (

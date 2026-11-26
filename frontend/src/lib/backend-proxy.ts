@@ -100,8 +100,23 @@ export async function proxyToBackend(
       cache: "no-store",
       signal: AbortSignal.timeout(BACKEND_ACTION_TIMEOUT_MS),
     });
-  } catch {
-    return NextResponse.json({ error: "The Verity backend is not reachable right now. Try again in a moment." }, { status: 502 });
+  } catch (err) {
+    // Timeout (AbortSignal.timeout) -> outcome unknown, do not say "try again"
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      return NextResponse.json(
+        {
+          error:
+            "The request took too long. The transaction may still have reached the network. Check your account before trying again.",
+          outcome_unknown: true,
+        },
+        { status: 504 }
+      );
+    }
+    // Refused connection, DNS failure, etc. -> safe to retry
+    return NextResponse.json(
+      { error: "The Verity backend is not reachable right now. Try again in a moment." },
+      { status: 502 }
+    );
   }
 
   const data = await res.json().catch(() => ({}));

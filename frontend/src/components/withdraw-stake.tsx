@@ -4,9 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "./wallet-provider";
 import { Button } from "./ui/button";
-import { buildStakeWithdrawal, relayReexecutorStake } from "../lib/client-api";
+import { buildStakeWithdrawal, relayReexecutorStake, ActionTimeoutError } from "../lib/client-api";
 import { assertWalletNetwork, signXdr, WalletError, wrongNetworkMessage } from "../lib/wallet";
-import { TESTNET_EXPLORER_TX } from "../lib/config";
+import { TESTNET_EXPLORER_TX, TESTNET_EXPLORER_ACCOUNT } from "../lib/config";
 import { formatUnits, parseUnits, resolveBondAsset } from "../lib/format";
 import type { BondAsset } from "../lib/types";
 
@@ -33,6 +33,7 @@ export function WithdrawStake({
   const [amountInput, setAmountInput] = useState("");
   const [busy, setBusy] = useState<null | "checking" | "building" | "signing" | "relaying">(null);
   const [error, setError] = useState<string | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   if (wallet.account !== account || BigInt(stakeStroops) === BigInt(0)) return null;
@@ -74,6 +75,11 @@ export function WithdrawStake({
         wallet.reportWrongNetwork(err.message);
         return;
       }
+      if (err instanceof ActionTimeoutError) {
+        setOutcomeUnknown(true);
+      } else {
+        setOutcomeUnknown(false);
+      }
       setError(err instanceof Error ? err.message : "The withdrawal could not be completed.");
     } finally {
       setBusy(null);
@@ -114,9 +120,22 @@ export function WithdrawStake({
         </Button>
       </div>
       {displayError && (
-        <p role="alert" className="text-sm text-status-slashed">
-          {displayError}
-        </p>
+        <div role="alert" className="text-sm text-status-slashed space-y-2">
+          <p>{displayError}</p>
+          {outcomeUnknown && (
+            <p className="text-xs">
+              The transaction may still be on-chain. Check your account on stellar.expert:{" "}
+              <a
+                href={TESTNET_EXPLORER_ACCOUNT(account)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline-offset-2 hover:underline"
+              >
+                {account.slice(0, 6)}…{account.slice(-4)}
+              </a>
+            </p>
+          )}
+        </div>
       )}
       {txHash && (
         <p role="status" className="text-sm">
