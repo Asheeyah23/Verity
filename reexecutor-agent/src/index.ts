@@ -23,6 +23,7 @@ import {
 } from "./sep10.js";
 import { NO_OUTPUT_HASH, voteMatches } from "./vote.js";
 import { startHeartbeat, type Heartbeat } from "./heartbeat.js";
+import { findConfigMismatches, type BackendConfig } from "./config.js";
 
 const DEFAULT_VOTING_BLOCK_MS = 60_000;
 const DEFAULT_RESYNC_COOLDOWN_MS = 60_000;
@@ -472,6 +473,26 @@ export function createWorker(options: WorkerOptions): ReexecutorWorker {
   };
 }
 
+async function verifyBackendConfig(backendUrl: string, contractId: string, networkPassphrase: string): Promise<void> {
+  const res = await fetch(`${backendUrl}/v1/config`);
+  if (!res.ok) throw new Error(`GET /v1/config failed: HTTP ${res.status}`);
+  const remote: unknown = await res.json();
+  if (!remote || typeof remote !== "object") {
+    throw new Error("GET /v1/config returned an unexpected payload");
+  }
+  const mismatches = findConfigMismatches(
+    { contractId, networkPassphrase },
+    remote as BackendConfig
+  );
+  if (mismatches.length > 0) {
+    console.error(`[reexecutor-agent] refusing to start: backend at ${backendUrl} does not match this worker's configuration:`);
+    for (const mismatch of mismatches) {
+      console.error(`[reexecutor-agent]   ${mismatch}`);
+    }
+    process.exit(1);
+  }
+}
+
 async function main() {
   const backendUrl = process.env.BACKEND_URL ?? "http://localhost:3001";
   const networkPassphrase = process.env.NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
@@ -594,6 +615,7 @@ async function main() {
   console.log(
     `[reexecutor-agent] SEP-10 server key ${sep10.serverKey.slice(0, 8)}… home domain ${sep10.homeDomain} web-auth domain ${sep10.webAuthDomain}`
   );
+  await verifyBackendConfig(backendUrl, contractId, networkPassphrase);
   // Mirrors this account's real on-chain stake into the backend, so an
   // account staked by script (or long ago) is assignable without re-staking.
   const reexecutor = await worker.sync();

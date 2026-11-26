@@ -177,7 +177,9 @@ and use "Fund my testnet account" on the home page. Then:
   `scripts/approve_reexecutor.sh G...`. Run your own worker with
   `REEXECUTOR_SECRET_KEY=S... ESCROW_GATE_CONTRACT_ID=C... pnpm --filter @verity/reexecutor-agent start`
   (see `reexecutor-agent/.env.example`); work is only assigned to accounts
-  whose worker is polling.
+  whose worker is polling. At startup the worker checks its
+  `ESCROW_GATE_CONTRACT_ID` and `NETWORK_PASSPHRASE` against the backend's
+  `GET /v1/config` and exits if either differs.
 - Open a pending submission to challenge it while its window is open.
 - A re-executor can withdraw stake from its own page, but not while any of its
   votes sits on a submission that has not settled.
