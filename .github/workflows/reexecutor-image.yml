@@ -45,11 +45,12 @@ jobs:
           test "$(docker run --rm verity-reexecutor:verify ls node_modules | grep -c '^tsx$' || true)" -eq 0
           test "$(docker run --rm verity-reexecutor:verify ls node_modules | grep -c '^typescript$' || true)" -eq 0
           QUICKJS_VERSION="$(node -p 'require("./reexecutor-agent/package.json").dependencies["quickjs-emscripten"]')"
-          EXPECTED_ENGINE="quickjs-emscripten@${QUICKJS_VERSION} (wasm sandbox, worker-isolated)"
-          docker run --rm -e EXPECTED_ENGINE="$EXPECTED_ENGINE" verity-reexecutor:verify node --input-type=module -e '
+          docker run --rm -e QUICKJS_VERSION="$QUICKJS_VERSION" verity-reexecutor:verify node --input-type=module -e '
             import assert from "node:assert/strict";
             import { REPLAY_ENGINE, runDeterministicFunction } from "./dist/sandbox/runner.js";
-            assert.equal(REPLAY_ENGINE, process.env.EXPECTED_ENGINE);
+            const prefix = `quickjs-emscripten@${process.env.QUICKJS_VERSION} (wasm sandbox, worker-isolated, fuel=`;
+            assert.ok(REPLAY_ENGINE.startsWith(prefix), REPLAY_ENGINE);
+            assert.match(REPLAY_ENGINE, /, fuel=\d+, wasm=sha256:[0-9a-f]{64}\)$/);
             const res = await runDeterministicFunction("return { doubled: input.n * 2 };", { n: 21 });
             assert.deepEqual(res.output, { doubled: 42 });
             assert.equal(res.outputHash, "27d4958085af3032ba46babb9e0b71690f9e2cc745ff7bb403a3d54e12152f82");

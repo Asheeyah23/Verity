@@ -507,6 +507,11 @@ test("reads and trims REEXECUTOR_SECRET_KEY_FILE and logs in, syncs and polls", 
       res.end(JSON.stringify({ token: "test-jwt-token" }));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/v1/config") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ escrow_gate_contract_id: CONTRACT_ID, network_passphrase: Networks.TESTNET }));
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/v1/reexecutors/sync") {
       assert.equal(req.headers.authorization, "Bearer test-jwt-token");
       synced = true;
