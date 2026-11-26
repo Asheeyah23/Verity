@@ -388,6 +388,38 @@ The admin (the deploying account) can change the configuration future
 submissions use, and decides which staked accounts may vote while
 `reexecutor_allowlist` is on. It cannot set, change or override a verdict.
 
+### Gating a marketplace's escrow
+
+`example-marketplace-escrow` is the reference for a marketplace that holds a
+bounty and pays it only on Verity's verdict. It is not deployed. Each escrow
+names its own SEP-41 token, so a bounty can be held in USDC while EscrowGate
+keeps taking bonds in its own asset:
+
+1. The poster calls `create_escrow(poster, payee, token, amount, escrow_value)`.
+   `token` and `amount` are the payment: for 250 USDC, the USDC asset contract
+   and `2_500_000_000` (a classic asset has seven decimals). `escrow_value` is
+   not a payment. It is the value the payee must declare to EscrowGate for this
+   job, in the gate's bond asset, and the gate sizes the agent's bond, a
+   challenger's bond and the challenge window from it. Nothing converts one
+   into the other. The poster chooses both, so no price oracle is involved.
+2. The payee reads the escrow with `get_escrow(escrow_id)` and submits to
+   EscrowGate with the escrow's `escrow_value`, and with `escrow_ref` set to the
+   escrow id: 32 bytes, all zero except the last 8, which hold the id
+   big-endian. Its bond is posted in the gate's asset, not in USDC.
+3. Once there is a verdict, anyone calls `release(escrow_id, submission_id)`.
+   It refuses a submission by another agent, for another escrow, or declaring
+   another `escrow_value`. `verified` pays the `amount` of `token` to the payee;
+   `slashed` and `expired_unverified` return it to the poster.
+
+**Trustlines.** A classic asset's contract cannot pay an account that has no
+trustline to the asset. If the payee has no USDC trustline, `release` fails as a
+whole: nothing is paid, the escrow stays unreleased, and the same call works once
+the trustline exists. The same holds for the poster on a refund.
+
+The example accepts any token contract. A marketplace that promises payment in a
+particular asset should check `token` against the assets it supports, and a payee
+should check it before taking the work.
+
 ## API
 
 SEP-10 JWT auth (`GET /auth?account=G…`, sign, `POST /auth`). Every
