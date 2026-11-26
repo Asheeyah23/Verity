@@ -1,6 +1,7 @@
 import "dotenv/config";
 import "./net.js";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Keypair } from "@stellar/stellar-sdk";
@@ -35,6 +36,45 @@ function requireEnv(name: string): string {
     process.exit(1);
   }
   return value;
+}
+
+/** Reads the signing key from REEXECUTOR_SECRET_KEY or from the file named by
+ * REEXECUTOR_SECRET_KEY_FILE (trimmed), so container deployments can mount a
+ * secret file instead of exposing the key in `docker inspect` or process.env.
+ * Refuses to start when both are set, when neither is set, or when the file is
+ * unreadable or empty. */
+function secretKeyEnv(): string {
+  const fromEnv = process.env.REEXECUTOR_SECRET_KEY;
+  const fromFile = process.env.REEXECUTOR_SECRET_KEY_FILE;
+  const hasEnv = fromEnv !== undefined && fromEnv !== "";
+  const hasFile = fromFile !== undefined && fromFile !== "";
+  if (hasEnv && hasFile) {
+    console.error("[reexecutor-agent] set either REEXECUTOR_SECRET_KEY or REEXECUTOR_SECRET_KEY_FILE, not both");
+    process.exit(1);
+  }
+  if (hasFile) {
+    const filePath = fromFile.trim();
+    let key: string;
+    try {
+      key = readFileSync(filePath, "utf8").trim();
+    } catch (err) {
+      console.error(
+        `[reexecutor-agent] failed to read REEXECUTOR_SECRET_KEY_FILE (${filePath}): ${(err as Error).message}`
+      );
+      process.exit(1);
+    }
+    if (!key) {
+      console.error(`[reexecutor-agent] REEXECUTOR_SECRET_KEY_FILE (${filePath}) is empty`);
+      process.exit(1);
+    }
+    return key;
+  }
+  const key = fromEnv?.trim();
+  if (key) return key;
+  console.error(
+    "[reexecutor-agent] REEXECUTOR_SECRET_KEY or REEXECUTOR_SECRET_KEY_FILE is required (see reexecutor-agent/.env.example)"
+  );
+  process.exit(1);
 }
 
 /** A numeric setting: unset or empty uses `fallback`; anything else must be a
@@ -519,7 +559,7 @@ async function main() {
   const sep10HomeDomain = process.env.SEP10_HOME_DOMAIN;
   const sep10WebAuthDomain = process.env.SEP10_WEB_AUTH_DOMAIN;
 
-  const keypair = Keypair.fromSecret(requireEnv("REEXECUTOR_SECRET_KEY"));
+  const keypair = Keypair.fromSecret(secretKeyEnv());
   const publicKey = keypair.publicKey();
   const tag = `[reexecutor ${publicKey.slice(0, 8)}]`;
 

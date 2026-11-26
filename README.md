@@ -174,7 +174,9 @@ and use "Fund my testnet account" on the home page. Then:
   to watch the bond get slashed.
 - **Re-executors → Register** to stake (the on-chain floor is 500 XLM). The
   account then shows as pending until the deployment admin approves it:
-  `scripts/approve_reexecutor.sh G...`. Run your own worker with
+  `scripts/approve_reexecutor.sh G...`. Run your own worker from the published
+  container image (see [Run a re-executor](#run-a-re-executor)) or from a
+  checkout with
   `REEXECUTOR_SECRET_KEY=S... ESCROW_GATE_CONTRACT_ID=C... pnpm --filter @verity/reexecutor-agent start`
   (see `reexecutor-agent/.env.example`); work is only assigned to accounts
   whose worker is polling. At startup the worker checks its
@@ -183,6 +185,77 @@ and use "Fund my testnet account" on the home page. Then:
 - Open a pending submission to challenge it while its window is open.
 - A re-executor can withdraw stake from its own page, but not while any of its
   votes sits on a submission that has not settled.
+
+## Run a re-executor
+
+Third-party operators can run a standalone re-executor worker from the
+published multi-arch image (`linux/amd64`, `linux/arm64`) without cloning the
+repository.
+
+### Prerequisites
+
+1. **Funded Stellar testnet account.** Generate or pick a keypair whose secret
+   key (`S...`) the worker will sign SEP-10 challenges and `attest_replay`
+   transactions with.
+2. **On-chain stake.** Register and stake at or above the contract floor (500
+   XLM by default) in the dashboard under **Re-executors → Register**.
+3. **Admin approval.** On deployments with `reexecutor_allowlist` enabled (the
+   default on testnet), the deployment admin must approve your public key
+   (`scripts/approve_reexecutor.sh G...`). Until the account is both active
+   (staked) and approved, the worker starts, syncs its on-chain state, logs a
+   warning, and receives no assignments.
+4. **Deployment endpoints.** Know the backend API URL (`BACKEND_URL`) and the
+   deployment's `EscrowGate` contract ID (`ESCROW_GATE_CONTRACT_ID`, also
+   published by `GET /v1/config` on the backend).
+
+### One-command run
+
+Write the secret key to a file readable by the container user (`node`, UID
+1000) and mount it read-only via `REEXECUTOR_SECRET_KEY_FILE` so the secret
+does not appear in `docker inspect`, process arguments, or Compose files:
+
+```bash
+umask 077 && printf '%s\n' 'S...' > rex.secret
+
+docker run -d --name verity-rex --restart unless-stopped \
+  -e BACKEND_URL=https://<verity-backend> -e ESCROW_GATE_CONTRACT_ID=C... \
+  -e REEXECUTOR_SECRET_KEY_FILE=/run/secrets/rex -v $PWD/rex.secret:/run/secrets/rex:ro \
+  ghcr.io/devqwinb/verity-reexecutor:<version>
+```
+
+Check `docker logs -f verity-rex` to confirm the worker logs its public key,
+replay engine (`quickjs-emscripten@0.32.0 (wasm sandbox, worker-isolated)`),
+and synced `stake`/`active`/`approved` status.
+
+### Docker Compose snippet
+
+```yaml
+services:
+  verity-rex:
+    image: ghcr.io/devqwinb/verity-reexecutor:<version>
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: https://<verity-backend>
+      ESCROW_GATE_CONTRACT_ID: C...
+      REEXECUTOR_SECRET_KEY_FILE: /run/secrets/rex
+    volumes:
+      - ./rex.secret:/run/secrets/rex:ro
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `ESCROW_GATE_CONTRACT_ID` | *(required)* | `EscrowGate` contract address (`C...`) for the deployment. |
+| `REEXECUTOR_SECRET_KEY_FILE` | *(one of `*_FILE` or `*_KEY` required)* | Path to a file containing the re-executor's Stellar secret key (`S...`); leading and trailing whitespace is trimmed. Setting both `REEXECUTOR_SECRET_KEY_FILE` and `REEXECUTOR_SECRET_KEY` fails at startup. |
+| `REEXECUTOR_SECRET_KEY` | *(one of `*_FILE` or `*_KEY` required)* | Re-executor Stellar secret key (`S...`) passed directly in the environment. Prefer `REEXECUTOR_SECRET_KEY_FILE` in containers. |
+| `BACKEND_URL` | `http://localhost:3001` | Base URL of the Verity backend API. |
+| `SOROBAN_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC URL used to read submissions and send `attest_replay` transactions. |
+| `NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` | Stellar network passphrase used to verify SEP-10 challenges and sign transactions. |
+| `POLL_INTERVAL_MS` | `3000` | Milliseconds between assignment polls (minimum `250`). |
+| `HEARTBEAT_INTERVAL_MS` | `15000` | Milliseconds between background liveness heartbeats (`POST /v1/reexecutors/:id/heartbeat`, minimum `1000`); keep well under the backend's `REEXECUTOR_LIVENESS_S` (`60` s). |
+| `RETRIEVAL_RETRY_BUDGET_S` | `120` | Seconds an unreachable retrieval target is retried before checking outbound connectivity and voting mismatch (capped at half the submission's challenge window, minimum `1`). |
+| `CONNECTIVITY_CHECK_URL` | `SOROBAN_RPC_URL` | Endpoint probed before blaming a retrieval target for a transient network failure; if unreachable, the worker casts no vote. |
 
 ## Writing replayable work
 
