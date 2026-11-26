@@ -55,7 +55,7 @@ jobs:
             assert.deepEqual(res.output, { doubled: 42 });
             assert.equal(res.outputHash, "27d4958085af3032ba46babb9e0b71690f9e2cc745ff7bb403a3d54e12152f82");
           '
-          if docker run --rm -e REEXECUTOR_SECRET_KEY=S1 -e REEXECUTOR_SECRET_KEY_FILE=/run/secrets/rex verity-reexecutor:verify 2>&1 | grep -q "not both"; then
+          if docker run --rm -e ESCROW_GATE_CONTRACT_ID=CDUMMY000000000000000000000000000000000000000000000000000000 -e REEXECUTOR_SECRET_KEY=S1 -e REEXECUTOR_SECRET_KEY_FILE=/run/secrets/rex verity-reexecutor:verify 2>&1 | grep -q "not both"; then
             true
           else
             echo "::error::Expected startup failure when both REEXECUTOR_SECRET_KEY and REEXECUTOR_SECRET_KEY_FILE are set"
