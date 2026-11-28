@@ -395,7 +395,8 @@ bounty and pays it only on Verity's verdict. It is not deployed. Each escrow
 names its own SEP-41 token, so a bounty can be held in USDC while EscrowGate
 keeps taking bonds in its own asset:
 
-1. The poster calls `create_escrow(poster, payee, token, amount, escrow_value)`.
+1. The poster calls
+   `create_escrow(poster, payee, token, amount, escrow_value, deadline)`.
    `token` and `amount` are the payment: for 250 USDC, the USDC asset contract
    and `2_500_000_000` (a classic asset has seven decimals). `escrow_value` is
    not a payment. It is the value the payee must declare to EscrowGate for this
@@ -410,6 +411,13 @@ keeps taking bonds in its own asset:
    It refuses a submission by another agent, for another escrow, or declaring
    another `escrow_value`. `verified` pays the `amount` of `token` to the payee;
    `slashed` and `expired_unverified` return it to the poster.
+
+`deadline` is a ledger timestamp and must be in the future. `release()` keeps
+working after it. If the payee never delivers, the poster can call
+`refund_expired(escrow_id)` once the deadline plus a two-challenge-window grace
+period has passed: the grace period keeps work already under verification at
+the deadline from being cut off. A refund is final, and a later `release()` is
+a no-op.
 
 **Trustlines.** A classic asset's contract cannot pay an account that has no
 trustline to the asset. If the payee has no USDC trustline, `release` fails as a
@@ -829,7 +837,8 @@ full tally.
   committed on-chain; the function is stored by hash but not committed. A
   verdict means "consistent with the artifacts the agent declared".
 - **No escrow is gated yet.** `example-marketplace-escrow` shows the
-  integration but is not deployed; `escrow_value` is declared by the agent.
+  integration, including a poster deadline and refund, but is not deployed;
+  `escrow_value` is declared by the agent.
 - **Voter set.** Stake is free on testnet, so an open voter set could be
   captured at no cost. Deployments here run with `reexecutor_allowlist` on:
   the admin approves which staked accounts may vote.
