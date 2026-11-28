@@ -18,6 +18,18 @@ pub struct EscrowCreated {
     pub escrow_value: i128,
 }
 
+/// The poster reclaimed an escrow that reached its deadline and grace period
+/// without a release. `amount` is in `token`.
+#[contractevent]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EscrowRefunded {
+    #[topic]
+    pub escrow_id: u64,
+    pub poster: Address,
+    pub token: Address,
+    pub amount: i128,
+}
+
 /// The escrow paid out, `amount` of `token`. `to` is the payee after a
 /// `Verified` verdict and the poster after `Slashed` or `ExpiredUnverified`;
 /// `verdict` says which.

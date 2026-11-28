@@ -35,7 +35,9 @@ pub enum Error {
     NoUnresolvedChallenge = 34,
     ChallengeAlreadyResolved = 35,
     AgentCannotChallenge = 36,
-    ConsensusAlreadyReached = 37,
+    DeadlineInThePast = 37,
+    DeadlineNotElapsed = 38,
+    AlreadyReleased = 39,
 
     NotUpheldResolution = 40,
     AlreadySlashed = 41,
@@ -43,6 +45,7 @@ pub enum Error {
     InsufficientConsensus = 44,
     InvalidResolutionMethod = 45,
     NotSlashable = 46,
+    ConsensusAlreadyReached = 47,
 
     VerifierNotRegistered = 50,
     VerifierAlreadyRegistered = 51,
