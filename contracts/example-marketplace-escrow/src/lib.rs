@@ -13,9 +13,25 @@
 
 mod events;
 
-use events::{EscrowCreated, EscrowReleased};
+use events::{EscrowCreated, EscrowRefunded, EscrowReleased};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 use verity_common::{Error, SubmissionRecord, Verdict};
+
+/// The longest challenge window `EscrowGate` accepts (`MAX_WINDOW_S` in
+/// contracts/escrow-gate/src/lib.rs): 7 days. Duplicated rather than shared,
+/// because depending on the `escrow-gate` crate at runtime would link its
+/// `#[contractimpl]` entrypoints into this contract's wasm and expose them as
+/// this contract's own. EscrowGate is only ever reached here by address, via
+/// `invoke_contract`; the crate is a dev-dependency for the tests alone.
+const MAX_CHALLENGE_WINDOW_S: u64 = 7 * 24 * 60 * 60; // 604_800
+
+/// Grace after an escrow's deadline before its poster may reclaim it. Covers
+/// the longest legitimate in-flight lifetime of work started before the
+/// deadline: a submission created just before it can still be inside its own
+/// challenge window at the deadline, and a challenge opened as that window
+/// closes can run for one further window before `release()` sees a terminal
+/// verdict. Two maximum challenge windows bound that worst case.
+const REFUND_GRACE_S: u64 = 2 * MAX_CHALLENGE_WINDOW_S;
 
 #[contracttype]
 #[derive(Clone)]
@@ -40,6 +56,9 @@ pub struct EscrowRecord {
     /// the units of the gate's bond asset. The gate sizes the agent's bond, a
     /// challenger's bond and the challenge window from it.
     pub escrow_value: i128,
+    /// A ledger timestamp after which the poster may reclaim the funds with
+    /// `refund_expired()` if the payee never delivered.
+    pub deadline: u64,
     pub released: bool,
 }
 
@@ -93,6 +112,10 @@ impl ExampleMarketplaceEscrow {
     /// chooses it. Nothing here converts `amount` into it, so the example
     /// needs no price oracle: a poster who escrows 250 USDC and wants the
     /// work bonded as 2,500 XLM of value passes both numbers.
+    ///
+    /// `deadline` is a ledger timestamp after which the payee has no promise
+    /// of payment: the poster may reclaim the escrow with `refund_expired()`
+    /// once the grace period after it has passed. It must be in the future.
     pub fn create_escrow(
         e: Env,
         poster: Address,
@@ -100,8 +123,15 @@ impl ExampleMarketplaceEscrow {
         token: Address,
         amount: i128,
         escrow_value: i128,
+        deadline: u64,
     ) -> Result<u64, Error> {
         poster.require_auth();
+        // A deadline already at or before now would let the poster refund the
+        // escrow as soon as the grace period has run out, so it is refused
+        // here before anything moves.
+        if deadline <= e.ledger().timestamp() {
+            return Err(Error::DeadlineInThePast);
+        }
         // An escrow of nothing pays nobody, and a negative amount would only
         // fail later, inside the token transfer, with a host error. Both are
         // refused here, before anything moves.
@@ -129,6 +159,7 @@ impl ExampleMarketplaceEscrow {
                 token: token.clone(),
                 amount,
                 escrow_value,
+                deadline,
                 released: false,
             },
         );
@@ -221,6 +252,47 @@ impl ExampleMarketplaceEscrow {
             token: rec.token,
             amount: rec.amount,
             verdict,
+        }
+        .publish(&e);
+        Ok(())
+    }
+
+    /// Reclaims an escrow the payee never delivered on. The poster must sign,
+    /// and the funds can only leave once the deadline has passed and a grace
+    /// period has run out. The grace period is the in-flight-work rule: a
+    /// submission created before the deadline is never cut off while it can
+    /// still be verified, because `REFUND_GRACE_S` covers its challenge window
+    /// plus the one further window an unresolved challenge can last. Until
+    /// then this returns `DeadlineNotElapsed` and the poster must wait.
+    ///
+    /// `release()` keeps working after the deadline, so work that does settle
+    /// is still paid even if the poster has not asked for a refund. A refund
+    /// is final: once it happens, `release()` is a no-op.
+    pub fn refund_expired(e: Env, escrow_id: u64) -> Result<(), Error> {
+        let mut rec: EscrowRecord = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(Error::SubmissionNotFound)?;
+        rec.poster.require_auth();
+        if rec.released {
+            return Err(Error::AlreadyReleased);
+        }
+        if e.ledger().timestamp() < rec.deadline.saturating_add(REFUND_GRACE_S) {
+            return Err(Error::DeadlineNotElapsed);
+        }
+
+        let token = soroban_sdk::token::TokenClient::new(&e, &rec.token);
+        token.transfer(&e.current_contract_address(), rec.poster.clone(), &rec.amount);
+
+        rec.released = true;
+        e.storage().persistent().set(&DataKey::Escrow(escrow_id), &rec);
+        bump(&e, escrow_id);
+        EscrowRefunded {
+            escrow_id,
+            poster: rec.poster.clone(),
+            token: rec.token.clone(),
+            amount: rec.amount,
         }
         .publish(&e);
         Ok(())

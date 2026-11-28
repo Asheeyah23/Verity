@@ -13,6 +13,9 @@ verity-common = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# The tests deploy a real EscrowGate to gate release() on. It must stay out of
+# [dependencies]: linking the crate into this contract would pull EscrowGate's
+# entrypoints into its wasm.
 escrow-gate = { path = "../escrow-gate", features = ["testutils"] }
 
 [features]
