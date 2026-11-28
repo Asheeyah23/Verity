@@ -35,8 +35,6 @@ pub enum Error {
     NoUnresolvedChallenge = 34,
     ChallengeAlreadyResolved = 35,
     AgentCannotChallenge = 36,
-    // 37-39 were free when the marketplace refund landed; #460's
-    // ConsensusAlreadyReached takes the next free code after these.
     DeadlineInThePast = 37,
     DeadlineNotElapsed = 38,
     AlreadyReleased = 39,
@@ -47,6 +45,7 @@ pub enum Error {
     InsufficientConsensus = 44,
     InvalidResolutionMethod = 45,
     NotSlashable = 46,
+    ConsensusAlreadyReached = 47,
 
     VerifierNotRegistered = 50,
     VerifierAlreadyRegistered = 51,

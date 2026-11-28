@@ -252,6 +252,8 @@ const CONTRACT_ERROR_DESCRIPTIONS: Record<string, string> = {
   VoteContradictsHash: "The vote disagrees with the output hash it reports.",
   AgentCannotAttest: "The agent that made a submission cannot vote on it.",
   AgentCannotChallenge: "The agent that made a submission cannot challenge it.",
+  ConsensusAlreadyReached:
+    "Re-executors have already decided this submission, so it can no longer be challenged. It settles when it is finalized.",
   ReexecutorNotActive:
     "This account is not an active re-executor or its stake is below the minimum threshold.",
   MissingTrustline:
